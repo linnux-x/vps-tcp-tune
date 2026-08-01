@@ -1,4 +1,42 @@
 #!/bin/bash
+
+#=============================================================================
+# 严格模式
+#
+# 本脚本以 root 运行且体量巨大（2.5 万行 / 400+ 函数）。此前未启用任何严格
+# 模式，任何命令失败都会被静默跳过继续执行——菜单 17 的 vless-all-in-one
+# 「点了没反应」就是这样产生的：wget 不存在，&& 链短路，用户毫无感知。
+#
+# -E  让 ERR 陷阱在函数与子 shell 中同样生效
+# -e  命令失败即中止，不再带着错误状态继续操作系统
+# -u  引用未定义变量即报错，避免路径拼成空串后误操作
+# -o pipefail  管道中任一环失败即视为失败
+#
+# 逃生开关：极少数情况下若严格模式导致既有流程无法完成，可用
+#   STRICT_MODE=0 bash net-tcp-tune.sh
+# 临时关闭，但这是权宜之计，请把触发场景反馈回仓库以便修复根因。
+#=============================================================================
+__STRICT_ON=0
+if [ "${STRICT_MODE:-1}" = "1" ]; then
+    set -Eeuo pipefail
+    __STRICT_ON=1
+fi
+
+# ERR 陷阱：把「静默死亡」变成可定位的报错。没有它，set -e 只会让脚本
+# 突然消失，对 2.5 万行的脚本几乎无法排查。
+__on_err() {
+    local exit_code=$? line=${BASH_LINENO[0]:-?} cmd=${BASH_COMMAND:-?} func=${FUNCNAME[1]:-main}
+    printf '\n\033[1;31m[脚本错误]\033[0m 第 %s 行 (%s) 执行失败，退出码 %s\n' "$line" "$func" "$exit_code" >&2
+    printf '  失败命令: %s\n' "$cmd" >&2
+    printf '  如需临时绕过严格模式: STRICT_MODE=0 bash %s\n' "${0##*/}" >&2
+    return "$exit_code"
+}
+# 仅在严格模式下挂 ERR 陷阱：关闭严格模式时脚本本就允许命令失败，
+# 此时挂陷阱只会对每个良性失败刷屏。
+if [ "$__STRICT_ON" = "1" ]; then
+    trap __on_err ERR
+fi
+
 #=============================================================================
 # BBR v3 终极优化脚本 - Ultimate Edition
 # 功能：结合 XanMod 官方内核的稳定性 + 专业队列算法调优
@@ -289,6 +327,62 @@ install_package() {
             return 1
         fi
     done
+}
+
+# --- 下载完整性校验 ---
+#
+# 原脚本 20 处下载动作中仅 3 处涉及 sha256，其余只靠「文件非空」或 unzip -t，
+# 只能挡住截断损坏，挡不住内容被替换。以下提供统一的校验入口。
+#
+# 已知版本的官方哈希固定在此。新增版本时补一个 case 分支即可；
+# 表中没有的版本会明确提示「未固定」而不是假装安全。
+# 用 case 而非 declare -A：关联数组需要 bash 4+，case 在 bash 3.2 上也能跑，
+# 便于在开发机上直接测试这段逻辑。
+known_sha256_for() {
+    case "$1" in
+        snell-v5.0.1-linux-amd64)
+            printf '9bea1c2b9e35b73b31634856c04d18c393072b9e5dcde6a32781d8b8f908c539\n' ;;
+        snell-v5.0.1-linux-aarch64)
+            printf '2f178bf5ac468ce1a130454efa40a0603fbbe4e47ecc4880a989f4abc7f824cf\n' ;;
+        *)
+            printf '\n' ;;
+    esac
+}
+
+sha256_of_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+# verify_download <文件> <哈希表键名>
+#   键名命中 KNOWN_SHA256  -> 严格校验，不符返回 1
+#   键名未命中             -> 打印实际哈希并提示未固定，返回 0（不阻断既有流程）
+verify_download() {
+    local file="$1" key="$2" expected actual
+    [ -s "$file" ] || { echo "校验失败：文件为空 $file" >&2; return 1; }
+    actual=$(sha256_of_file "$file") || {
+        echo "缺少 sha256sum/shasum，无法校验完整性" >&2
+        return 1
+    }
+    expected=$(known_sha256_for "$key")
+    if [ -n "$expected" ]; then
+        if [ "$actual" != "$expected" ]; then
+            echo "SHA-256 校验失败: $key" >&2
+            echo "  期望: $expected" >&2
+            echo "  实际: $actual" >&2
+            return 1
+        fi
+        echo "SHA-256 校验通过: $key"
+        return 0
+    fi
+    echo "提示：$key 未固定哈希，实际值 $actual"
+    echo "      如需固定，请给 known_sha256_for 补一个 case 分支。"
+    return 0
 }
 
 safe_download_script() {
@@ -2551,7 +2645,7 @@ LIMITSEOF
                     local verify_val
                     verify_val=$(cat "$rxq" 2>/dev/null | tr -d ',' | sed 's/^0*//')
                     [ -z "$verify_val" ] && verify_val="0"
-                    [ "$verify_val" = "$rps_mask" ] && rps_ok=1
+                    [ "$verify_val" = "$rps_mask" ] && rps_ok=1 || true
                 fi
             done
             # 设置 RFS：同一连接的包尽量在同一核处理（减少 cache miss）
@@ -4280,7 +4374,7 @@ dns_purify_and_harden() {
             [[ "$old_enabled" == "true" ]] && resolved_enable_state="enabled" || resolved_enable_state="disabled"
         }
         [[ -f "$PRE_STATE_DIR/resolved.was-masked" ]] && resolved_was_masked=$(cat "$PRE_STATE_DIR/resolved.was-masked" 2>/dev/null || echo "false")
-        [[ -f "$PRE_STATE_DIR/resolved.was-active" ]] && resolved_was_active=$(cat "$PRE_STATE_DIR/resolved.was-active" 2>/dev/null || echo "false")
+        [[ -f "$PRE_STATE_DIR/resolved.was-active" ]] && resolved_was_active=$(cat "$PRE_STATE_DIR/resolved.was-active" 2>/dev/null || echo "false") || true
 
         if [[ "$resolved_was_masked" == "true" ]]; then
             systemctl mask systemd-resolved 2>/dev/null || true
@@ -5364,7 +5458,7 @@ if [[ -d "$PRE_STATE_DIR" ]]; then
         [[ "$old_enabled" == "true" ]] && resolved_enable_state="enabled" || resolved_enable_state="disabled"
     fi
     [[ -f "$PRE_STATE_DIR/resolved.was-masked" ]] && resolved_was_masked=$(cat "$PRE_STATE_DIR/resolved.was-masked" 2>/dev/null || echo "false")
-    [[ -f "$PRE_STATE_DIR/resolved.was-active" ]] && resolved_was_active=$(cat "$PRE_STATE_DIR/resolved.was-active" 2>/dev/null || echo "false")
+    [[ -f "$PRE_STATE_DIR/resolved.was-active" ]] && resolved_was_active=$(cat "$PRE_STATE_DIR/resolved.was-active" 2>/dev/null || echo "false") || true
 
     if [[ "$resolved_was_masked" == "true" ]]; then
         systemctl mask systemd-resolved 2>/dev/null || true
@@ -8272,16 +8366,18 @@ show_snell_config_live() {
 # 成功：stdout 输出解压后的临时目录路径（内含 snell-server），调用方负责用完后 rm -rf
 # 失败：返回 1，临时文件已自行清理
 snell_download_binary() {
-    local arch version snell_url tmp_zip tmp_dir
+    local arch version snell_url tmp_zip tmp_dir arch_label=""
     # 用 uname -m 替代 arch(后者在某些精简发行版不存在)
     arch=$(uname -m)
     version="v${SNELL_DEFAULT_VERSION}"
     case "$arch" in
         aarch64|arm64)
             snell_url="https://dl.nssurge.com/snell/snell-server-${version}-linux-aarch64.zip"
+            arch_label="aarch64"
             ;;
         x86_64|amd64)
             snell_url="https://dl.nssurge.com/snell/snell-server-${version}-linux-amd64.zip"
+            arch_label="amd64"
             ;;
         *)
             echo -e "${SNELL_RED}不支持的架构: ${arch}（仅支持 x86_64 / aarch64）${SNELL_RESET}" >&2
@@ -8300,6 +8396,15 @@ snell_download_binary() {
         rm -f "$tmp_zip"; rm -rf "$tmp_dir"
         return 1
     fi
+
+    # 下载完整性/真实性校验。原实现只有 unzip -t，能挡截断损坏，挡不住内容被替换。
+    # 键名与 KNOWN_SHA256 表对应；表中没有的版本会提示未固定但不阻断。
+    if ! verify_download "$tmp_zip" "snell-${version}-linux-${arch_label:-unknown}"; then
+        echo -e "${SNELL_RED}Snell 安装包校验失败，已中止。${SNELL_RESET}" >&2
+        rm -f "$tmp_zip"; rm -rf "$tmp_dir"
+        return 1
+    fi
+
 
     # unzip -t 完整性测试，截断/损坏的压缩包在这里拦下
     if ! unzip -t "$tmp_zip" >/dev/null 2>&1 || ! unzip -o "$tmp_zip" -d "$tmp_dir" >/dev/null 2>&1; then
@@ -13154,7 +13259,7 @@ menu_remove_port_block() {
 
     while IFS='|' read -r port timestamp note; do
         [[ "$port" =~ ^# ]] && continue
-        [[ -z "$port" ]] && continue
+        [[ -z "$port" ]] && continue || true
         blocked_ports+=("$port")
         port_info+=("$port|$timestamp|$note")
     done < "$CN_BLOCK_CONFIG"
@@ -13234,7 +13339,7 @@ menu_list_blocked_ports() {
 
     while IFS='|' read -r port timestamp note; do
         [[ "$port" =~ ^# ]] && continue
-        [[ -z "$port" ]] && continue
+        [[ -z "$port" ]] && continue || true
         printf "%-8s %-20s %-30s\n" "$port" "$timestamp" "$note"
         ((count++))
     done < "$CN_BLOCK_CONFIG"
@@ -16220,7 +16325,7 @@ cf_helper_migrate_legacy() {
     local has_legacy=false
     [ -d "$CF_LEGACY_HOME" ] && has_legacy=true
     ls /root/sub-store-cf-tunnel-*.yaml 2>/dev/null | grep -q . && has_legacy=true
-    [ -d /root/reverse-proxy-configs/cf-tunnel ] && has_legacy=true
+    [ -d /root/reverse-proxy-configs/cf-tunnel ] && has_legacy=true || true
 
     if [ "$has_legacy" = false ]; then
         return 0
@@ -16866,7 +16971,7 @@ cf_tunnel_delete() {
     local cfg tid hosts
     cfg=$(_cf_get_config_from_service "$svc")
     [ -n "$cfg" ] && [ -f "$cfg" ] && tid=$(_cf_get_yaml_field "$cfg" "tunnel")
-    [ -n "$cfg" ] && [ -f "$cfg" ] && hosts=$(_cf_get_yaml_hostnames "$cfg")
+    [ -n "$cfg" ] && [ -f "$cfg" ] && hosts=$(_cf_get_yaml_hostnames "$cfg") || true
 
     echo ""
     echo "[1/4] 停止 systemd..."
@@ -19697,7 +19802,7 @@ fuclaude_change_port() {
 
     # 设置默认值
     [ -z "$cookie_secret" ] && cookie_secret=$(fuclaude_generate_secret)
-    [ -z "$signup_enabled" ] && signup_enabled="false"
+    [ -z "$signup_enabled" ] && signup_enabled="false" || true
 
     docker run -d \
         --name "$FUCLAUDE_CONTAINER_NAME" \
@@ -19741,7 +19846,7 @@ fuclaude_change_password() {
     local signup_enabled=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
 
     [ -z "$cookie_secret" ] && cookie_secret=$(fuclaude_generate_secret)
-    [ -z "$signup_enabled" ] && signup_enabled="false"
+    [ -z "$signup_enabled" ] && signup_enabled="false" || true
 
     # 停止并删除旧容器
     docker stop "$FUCLAUDE_CONTAINER_NAME"
@@ -23483,7 +23588,7 @@ ptm_remove_nftables_rules() {
             fi
         done
         [ "$deleted" = false ] && break
-        [ "$deleted_count" -ge 200 ] && break
+        [ "$deleted_count" -ge 200 ] && break || true
     done
 
     nft delete counter $PTM_TABLE_FAMILY $PTM_TABLE_NAME "port_${port_safe}_in" 2>/dev/null || true
@@ -23579,7 +23684,7 @@ ptm_remove_quota() {
             fi
         done
         [ "$deleted" = false ] && break
-        [ "$deleted_count" -ge 100 ] && break
+        [ "$deleted_count" -ge 100 ] && break || true
     done
     nft delete quota $PTM_TABLE_FAMILY $PTM_TABLE_NAME "$quota_name" 2>/dev/null || true
 }
@@ -23637,7 +23742,7 @@ ptm_unblock_port() {
             fi
         done
         [ "$deleted" = false ] && break
-        [ "$deleted_count" -ge 100 ] && break
+        [ "$deleted_count" -ge 100 ] && break || true
     done
     nft delete quota $PTM_TABLE_FAMILY $PTM_TABLE_NAME "$quota_name" 2>/dev/null || true
     ptm_add_nftables_rules "$port"
@@ -25145,7 +25250,7 @@ ptm_menu_merge_ports() {
         ptm_update_config "del(.ports.\"$port\")"
     done
     [ -n "$expiration_date" ] && [ "$expiration_date" != "null" ] && ptm_update_config ".ports.\"$group_key\".expiration_date = \"$expiration_date\""
-    [ -n "$email" ] && [ "$email" != "null" ] && ptm_update_config ".ports.\"$group_key\".email = \"$email\""
+    [ -n "$email" ] && [ "$email" != "null" ] && ptm_update_config ".ports.\"$group_key\".email = \"$email\"" || true
 
     ptm_restore_counter_value "$group_key" "$total_input" "$total_output"
     ptm_add_nftables_rules "$group_key"
@@ -25173,9 +25278,9 @@ ptm_menu_configure_notify() {
     read -e -p "管理员邮箱 (接收系统级通知，留空不改): " admin_email
 
     [ -n "$api_key" ] && ptm_update_config ".notify.resend_api_key = \"$api_key\" | .notify.enabled = true"
-    [ -n "$email_from" ] && ptm_update_config ".notify.email_from = \"$email_from\""
+    [ -n "$email_from" ] && ptm_update_config ".notify.email_from = \"$email_from\"" || true
     [ -n "$email_from_name" ] && ptm_update_config ".notify.email_from_name = \"$email_from_name\""
-    [ -n "$admin_email" ] && ptm_update_config ".notify.admin_email = \"$admin_email\""
+    [ -n "$admin_email" ] && ptm_update_config ".notify.admin_email = \"$admin_email\"" || true
     echo -e "${gl_lv}✓ 通知设置已保存${gl_bai}"
     break_end
 }
@@ -25209,7 +25314,7 @@ ptm_menu_diagnose() {
         local email
         email=$(jq -r ".ports.\"$port\".email // \"\"" "$PTM_CONFIG_FILE")
         [ -z "$email" ] || [ "$email" = "null" ] && echo -n "⚠️未配置客户邮箱 "
-        [ "$ok" = true ] && echo -n "✅正常"
+        [ "$ok" = true ] && echo -n "✅正常" || true
         echo ""
     done
     echo ""
@@ -25432,8 +25537,8 @@ main() {
     cf_helper_migrate_legacy 2>/dev/null
 
     # 加载用户配置（如果存在）
-    [ -f "/etc/net-tcp-tune.conf" ] && source "/etc/net-tcp-tune.conf"
-    [ -f "$HOME/.net-tcp-tune.conf" ] && source "$HOME/.net-tcp-tune.conf"
+    [ -f "/etc/net-tcp-tune.conf" ] && source "/etc/net-tcp-tune.conf" || true
+    [ -f "$HOME/.net-tcp-tune.conf" ] && source "$HOME/.net-tcp-tune.conf" || true
 
     # 交互式菜单
     while true; do
