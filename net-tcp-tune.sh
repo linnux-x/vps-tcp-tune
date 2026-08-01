@@ -12444,6 +12444,52 @@ run_install_dual() {
     view_all_info
 }
 
+# --- vless-all-in-one 外部脚本 ---
+# 原实现为菜单内联的 `wget -O vless-server.sh <url> && chmod +x && bash`，存在四个问题：
+#   1. 裸用 wget：wget 仅由 install_required_packages_snell() 安装，未走 Snell 流程的
+#      纯净 Debian 上通常不存在，导致 `command not found`，&& 链静默短路；
+#   2. 该分支设了 needs_pause=false，失败信息一闪而过、菜单立即重绘，表现为「点了没反应」；
+#   3. 下载到当前工作目录，污染 CWD，且 CWD 不可写时直接失败；
+#   4. 不校验下载结果，空文件或 HTML 错误页也会被 chmod +x 后执行。
+# 现改为复用脚本自带的 safe_download_script（curl→wget 回退、超时、重试、
+# 原子落盘、空文件检查），下载到临时目录，并对内容做基本合法性检查。
+VLESS_AIO_URL="${VLESS_AIO_URL:-https://gitlab.com/chil30-group/vless-all-in-one/-/raw/main/vless-server.sh}"
+
+run_vless_all_in_one() {
+    local tmp_dir script_path
+    tmp_dir=$(mktemp -d) || { error "无法创建临时目录"; return 1; }
+    script_path="$tmp_dir/vless-server.sh"
+
+    info "正在下载多协议代理一键部署脚本..."
+    if ! safe_download_script "$VLESS_AIO_URL" "$script_path"; then
+        error "下载失败：$VLESS_AIO_URL"
+        error "请检查网络连通性；若本机既无 curl 也无 wget，请先安装其一。"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # 基本合法性检查：必须是非空的 shell 脚本，避免把 HTML 错误页当脚本执行
+    if [ ! -s "$script_path" ] || ! head -c 2 "$script_path" | grep -q '#!'; then
+        error "下载内容不是有效的 shell 脚本，已中止执行。"
+        error "文件保留在 $script_path 供排查。"
+        return 1
+    fi
+
+    warning "即将执行来自外部来源的脚本（未固定版本、未校验哈希）："
+    echo -e "  ${cyan}${VLESS_AIO_URL}${none}"
+    read -p " 确认执行？[y/N]: " confirm || true
+    case "$confirm" in
+        y|Y)
+            chmod +x "$script_path"
+            bash "$script_path"
+            ;;
+        *)
+            info "已取消。"
+            ;;
+    esac
+    rm -rf "$tmp_dir"
+}
+
 # --- 主菜单与脚本入口 ---
 main_menu() {
     while true; do
@@ -12502,7 +12548,7 @@ main_menu() {
             14) view_xray_log; needs_pause=false ;;
             15) view_all_info ;;
             16) manage_routing_rules ;;
-            17) wget -O vless-server.sh https://gitlab.com/chil30-group/vless-all-in-one/-/raw/main/vless-server.sh && chmod +x vless-server.sh && bash vless-server.sh; needs_pause=false ;;
+            17) run_vless_all_in_one ;;
             0) success "感谢使用！"; exit 0 ;;
             *) error "无效选项。请输入 0-17。" ;;
         esac
