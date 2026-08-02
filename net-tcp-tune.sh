@@ -108,7 +108,8 @@ gl_hui='\033[90m'       # 灰色
 # 显示宽度计算（中文占2列，ASCII占1列）
 get_display_width() {
     local str="$1"
-    local byte_len=$(printf '%s' "$str" | LC_ALL=C wc -c | tr -d ' ')
+    local byte_len
+    byte_len=$(printf '%s' "$str" | LC_ALL=C wc -c | tr -d ' ')
     local char_len=${#str}
     local extra=$((byte_len - char_len))
     local wide=$((extra / 2))
@@ -119,7 +120,8 @@ get_display_width() {
 format_fixed_width() {
     local str="$1"
     local target_width=$2
-    local current_width=$(get_display_width "$str")
+    local current_width
+    current_width=$(get_display_width "$str")
 
     # 如果太长，截断
     if [ "$current_width" -gt "$target_width" ]; then
@@ -129,7 +131,8 @@ format_fixed_width() {
         while [ $i -lt $len ]; do
             local char="${str:$i:1}"
             local test_str="${result}${char}"
-            local test_width=$(get_display_width "$test_str")
+            local test_width
+            test_width=$(get_display_width "$test_str")
             if [ "$test_width" -gt $((target_width - 2)) ]; then
                 str="${result}.."
                 break
@@ -349,6 +352,21 @@ known_sha256_for() {
     esac
 }
 
+# verify_binary_download <文件> <类型: elf|targz|zip>
+# 对无法固定哈希的动态下载（上游总是「最新版」）做最低限度把关：
+# 非空 + 文件魔数正确。仅检查非空的话，HTML 错误页也会被 chmod +x 装上去。
+verify_binary_download() {
+    local file="$1" kind="${2:-elf}" magic
+    [ -s "$file" ] || { echo "下载内容为空: $file" >&2; return 1; }
+    magic=$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')
+    case "$kind" in
+        elf)   [ "${magic:0:8}" = "7f454c46" ] || { echo "不是 ELF 可执行文件（可能是错误页）" >&2; return 1; } ;;
+        targz) [ "${magic:0:4}" = "1f8b" ]     || { echo "不是 gzip 归档（可能是错误页）" >&2; return 1; } ;;
+        zip)   [ "${magic:0:8}" = "504b0304" ] || { echo "不是 zip 归档（可能是错误页）" >&2; return 1; } ;;
+    esac
+    return 0
+}
+
 sha256_of_file() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
@@ -484,7 +502,8 @@ run_remote_script() {
 check_disk_space() {
     local required_gb=$1
     local required_space_mb=$((required_gb * 1024))
-    local available_space_mb=$(df -m / | awk 'NR==2 {print $4}')
+    local available_space_mb
+    available_space_mb=$(df -m / | awk 'NR==2 {print $4}')
 
     if [ "$available_space_mb" -lt "$required_space_mb" ]; then
         echo -e "${gl_huang}警告: ${gl_bai}磁盘空间不足！"
@@ -498,7 +517,8 @@ check_disk_space() {
 }
 
 check_swap() {
-    local swap_total=$(free -m | awk 'NR==3{print $2}')
+    local swap_total
+    swap_total=$(free -m | awk 'NR==3{print $2}')
 
     if [ "$swap_total" -eq 0 ]; then
         echo -e "${gl_huang}检测到无虚拟内存，正在创建 1G SWAP...${gl_bai}"
@@ -567,7 +587,8 @@ add_swap() {
 
 calculate_optimal_swap() {
     # 获取物理内存（MB）
-    local mem_total=$(free -m | awk 'NR==2{print $2}')
+    local mem_total
+    mem_total=$(free -m | awk 'NR==2{print $2}')
     local recommended_swap
     local reason
     
@@ -659,9 +680,12 @@ manage_swap() {
         echo -e "${gl_kjlan}=== 虚拟内存管理（仅限 /swapfile） ===${gl_bai}"
         echo -e "${gl_huang}提示:${gl_bai} 如需调整 /dev/ swap 分区，请手动执行 swapoff/swap 分区工具。"
 
-        local mem_total=$(free -m | awk 'NR==2{print $2}')
-        local swap_total=$(free -m | awk 'NR==3{print $2}')
-        local swap_info=$(free -m | awk 'NR==3{used=$3; total=$2; if (total == 0) {percentage=0} else {percentage=used*100/total}; printf "%dM/%dM (%d%%)", used, total, percentage}')
+        local mem_total
+        mem_total=$(free -m | awk 'NR==2{print $2}')
+        local swap_total
+        swap_total=$(free -m | awk 'NR==3{print $2}')
+        local swap_info
+        swap_info=$(free -m | awk 'NR==3{used=$3; total=$2; if (total == 0) {percentage=0} else {percentage=used*100/total}; printf "%dM/%dM (%d%%)", used, total, percentage}')
         
         echo -e "物理内存:     ${gl_huang}${mem_total}MB${gl_bai}"
         echo -e "当前虚拟内存: ${gl_huang}$swap_info${gl_bai}"
@@ -1041,13 +1065,15 @@ set_temp_socks5_proxy() {
     fi
     
     # 生成临时配置文件（安全模式）
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
     # 优先使用用户私有目录，回退到 /tmp
     local secure_tmp="${XDG_RUNTIME_DIR:-/tmp}"
     local config_file="${secure_tmp}/socks5_proxy_${timestamp}.sh"
 
     # 设置安全的 umask（仅所有者可读写）
-    local old_umask=$(umask)
+    local old_umask
+    old_umask=$(umask)
     umask 077
 
     # 生成配置文件（不在文件中输出完整密码）
@@ -1120,7 +1146,8 @@ disable_ipv6_temporary() {
             sysctl -w net.ipv6.conf.lo.disable_ipv6=1 >/dev/null 2>&1
             
             # 验证状态
-            local ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+            local ipv6_status
+            ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
             
             echo ""
             if [ "$ipv6_status" = "1" ]; then
@@ -1185,9 +1212,12 @@ disable_ipv6_permanent() {
             echo -e "${gl_zi}[步骤 1/3] 备份当前IPv6状态...${gl_bai}"
             
             # 读取当前IPv6状态并备份
-            local ipv6_all=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
-            local ipv6_default=$(sysctl -n net.ipv6.conf.default.disable_ipv6 2>/dev/null || echo "0")
-            local ipv6_lo=$(sysctl -n net.ipv6.conf.lo.disable_ipv6 2>/dev/null || echo "0")
+            local ipv6_all
+            ipv6_all=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
+            local ipv6_default
+            ipv6_default=$(sysctl -n net.ipv6.conf.default.disable_ipv6 2>/dev/null || echo "0")
+            local ipv6_lo
+            ipv6_lo=$(sysctl -n net.ipv6.conf.lo.disable_ipv6 2>/dev/null || echo "0")
             
             # 创建备份文件
             cat > /etc/sysctl.d/.ipv6-state-backup.conf << BACKUPEOF
@@ -1220,7 +1250,8 @@ EOF
             sysctl --system >/dev/null 2>&1
             
             # 验证状态
-            local ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+            local ipv6_status
+            ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
             
             echo ""
             if [ "$ipv6_status" = "1" ]; then
@@ -1289,9 +1320,12 @@ cancel_ipv6_permanent_disable() {
                 echo -e "${gl_zi}[步骤 3/4] 从备份还原原始状态...${gl_bai}"
                 
                 # 读取备份的原始值
-                local backup_all=$(grep 'net.ipv6.conf.all.disable_ipv6' /etc/sysctl.d/.ipv6-state-backup.conf | awk -F'=' '{print $2}')
-                local backup_default=$(grep 'net.ipv6.conf.default.disable_ipv6' /etc/sysctl.d/.ipv6-state-backup.conf | awk -F'=' '{print $2}')
-                local backup_lo=$(grep 'net.ipv6.conf.lo.disable_ipv6' /etc/sysctl.d/.ipv6-state-backup.conf | awk -F'=' '{print $2}')
+                local backup_all
+                backup_all=$(grep 'net.ipv6.conf.all.disable_ipv6' /etc/sysctl.d/.ipv6-state-backup.conf | awk -F'=' '{print $2}')
+                local backup_default
+                backup_default=$(grep 'net.ipv6.conf.default.disable_ipv6' /etc/sysctl.d/.ipv6-state-backup.conf | awk -F'=' '{print $2}')
+                local backup_lo
+                backup_lo=$(grep 'net.ipv6.conf.lo.disable_ipv6' /etc/sysctl.d/.ipv6-state-backup.conf | awk -F'=' '{print $2}')
                 
                 # 恢复原始值
                 sysctl -w net.ipv6.conf.all.disable_ipv6=${backup_all} >/dev/null 2>&1
@@ -1323,7 +1357,8 @@ cancel_ipv6_permanent_disable() {
             sysctl --system >/dev/null 2>&1
             
             # 验证状态
-            local ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+            local ipv6_status
+            ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
             
             echo ""
             if [ "$ipv6_status" = "0" ]; then
@@ -1357,7 +1392,8 @@ manage_ipv6() {
         echo ""
         
         # 显示当前IPv6状态
-        local ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+        local ipv6_status
+        ipv6_status=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
         local status_text=""
         local status_color=""
         
@@ -1509,7 +1545,8 @@ detect_bandwidth() {
             if ! command -v speedtest &>/dev/null; then
                 echo -e "${gl_huang}speedtest 未安装，正在安装...${gl_bai}" >&2
                 # 调用脚本中已有的安装逻辑（简化版）
-                local cpu_arch=$(uname -m)
+                local cpu_arch
+                cpu_arch=$(uname -m)
                 local download_url
                 case "$cpu_arch" in
                     x86_64)
@@ -1543,13 +1580,15 @@ detect_bandwidth() {
             echo -e "${gl_zi}正在搜索附近测速服务器...${gl_bai}" >&2
             
             # 获取附近服务器列表（按延迟排序）
-            local servers_list=$(speedtest --accept-license --servers 2>/dev/null | sed -nE 's/^[[:space:]]*([0-9]+).*/\1/p' | head -n 10)
+            local servers_list
+            servers_list=$(speedtest --accept-license --servers 2>/dev/null | sed -nE 's/^[[:space:]]*([0-9]+).*/\1/p' | head -n 10)
             
             if [ -z "$servers_list" ]; then
                 echo -e "${gl_huang}无法获取服务器列表，使用自动选择...${gl_bai}" >&2
                 servers_list="auto"
             else
-                local server_count=$(echo "$servers_list" | wc -l)
+                local server_count
+                server_count=$(echo "$servers_list" | wc -l)
                 echo -e "${gl_lv}✅ 找到 ${server_count} 个附近服务器${gl_bai}" >&2
             fi
             echo "" >&2
@@ -1590,7 +1629,8 @@ detect_bandwidth() {
                 
                 # 检查是否成功
                 if [ -n "$upload_speed" ] && ! echo "$speedtest_output" | grep -qi "FAILED\|error"; then
-                    local success_server=$(echo "$speedtest_output" | grep "Server:" | head -n1 | sed 's/.*Server: //')
+                    local success_server
+                    success_server=$(echo "$speedtest_output" | grep "Server:" | head -n1 | sed 's/.*Server: //')
                     echo -e "${gl_lv}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}" >&2
                     echo -e "${gl_lv}✅ 测速成功！${gl_bai}" >&2
                     echo -e "${gl_zi}使用服务器: ${success_server}${gl_bai}" >&2
@@ -1598,7 +1638,8 @@ detect_bandwidth() {
                     echo "" >&2
                     break
                 else
-                    local failed_server=$(echo "$speedtest_output" | grep "Server:" | head -n1 | sed 's/.*Server: //' | sed 's/[[:space:]]*$//')
+                    local failed_server
+                    failed_server=$(echo "$speedtest_output" | grep "Server:" | head -n1 | sed 's/.*Server: //' | sed 's/[[:space:]]*$//')
                     if [ -n "$failed_server" ]; then
                         echo -e "${gl_huang}⚠️  失败: ${failed_server}${gl_bai}" >&2
                     else
@@ -1687,7 +1728,8 @@ detect_bandwidth() {
             # 检查speedtest是否安装
             if ! command -v speedtest &>/dev/null; then
                 echo -e "${gl_huang}speedtest 未安装，正在安装...${gl_bai}" >&2
-                local cpu_arch=$(uname -m)
+                local cpu_arch
+                cpu_arch=$(uname -m)
                 local download_url
                 case "$cpu_arch" in
                     x86_64)
@@ -1766,7 +1808,8 @@ detect_bandwidth() {
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
             echo "" >&2
             
-            local speedtest_output=$(speedtest --accept-license --server-id="$server_id" 2>&1)
+            local speedtest_output
+            speedtest_output=$(speedtest --accept-license --server-id="$server_id" 2>&1)
             echo "$speedtest_output" >&2
             echo "" >&2
             
@@ -2113,8 +2156,10 @@ calculate_buffer_size() {
 # SWAP智能检测和建议函数（集成到选项2/3）
 #=============================================================================
 check_and_suggest_swap() {
-    local mem_total=$(free -m | awk 'NR==2{print $2}')
-    local swap_total=$(free -m | awk 'NR==3{print $2}')
+    local mem_total
+    mem_total=$(free -m | awk 'NR==2{print $2}')
+    local swap_total
+    swap_total=$(free -m | awk 'NR==3{print $2}')
     local recommended_swap
     local need_swap=0
     
@@ -2341,7 +2386,8 @@ bbr_configure_direct() {
     echo ""
     echo -e "${gl_zi}[步骤 2/6] 检测服务器带宽并计算最优缓冲区...${gl_bai}"
 
-    local detected_bandwidth=$(detect_bandwidth)
+    local detected_bandwidth
+    detected_bandwidth=$(detect_bandwidth)
 
     # 地区选择（影响缓冲区大小：高延迟地区需要更大缓冲区）
     local region="asia"
@@ -2362,7 +2408,8 @@ bbr_configure_direct() {
         *) region="asia" ;;
     esac
 
-    local buffer_mb=$(calculate_buffer_size "$detected_bandwidth" "$region")
+    local buffer_mb
+    buffer_mb=$(calculate_buffer_size "$detected_bandwidth" "$region")
     local buffer_bytes=$((buffer_mb * 1024 * 1024))
     
     echo -e "${gl_lv}✅ 将使用 ${buffer_mb}MB 缓冲区配置${gl_bai}"
@@ -2399,7 +2446,8 @@ bbr_configure_direct() {
     echo "正在创建新配置..."
     
     # 获取物理内存用于虚拟内存参数调整
-    local mem_total=$(free -m | awk 'NR==2{print $2}')
+    local mem_total
+    mem_total=$(free -m | awk 'NR==2{print $2}')
     local vm_swappiness=5
     local vm_dirty_ratio=15
     local vm_min_free_kbytes=65536
@@ -2669,10 +2717,14 @@ LIMITSEOF
     echo ""
     echo -e "${gl_zi}[步骤 6/6] 验证配置...${gl_bai}"
     
-    local actual_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
-    local actual_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-    local actual_wmem=$(sysctl -n net.ipv4.tcp_wmem 2>/dev/null | awk '{print $3}')
-    local actual_rmem=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
+    local actual_qdisc
+    actual_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    local actual_cc
+    actual_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    local actual_wmem
+    actual_wmem=$(sysctl -n net.ipv4.tcp_wmem 2>/dev/null | awk '{print $3}')
+    local actual_rmem
+    actual_rmem=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
     
     echo ""
     echo -e "${gl_kjlan}=== 配置验证 ===${gl_bai}"
@@ -2726,7 +2778,8 @@ LIMITSEOF
         local rps_all_ok=1
         for d in /sys/class/net/*; do
             [ -e "$d" ] || continue
-            local vdev=$(basename "$d")
+            local vdev
+            vdev=$(basename "$d")
             case "$vdev" in
                 lo|docker*|veth*|br-*|virbr*|zt*|tailscale*|wg*|tun*|tap*) continue;;
             esac
@@ -2995,7 +3048,8 @@ install_xanmod_kernel() {
     # 添加 XanMod GPG 密钥（分步执行，避免管道 $? 只检查最后一条命令）
     echo "正在添加 XanMod 仓库密钥..."
     local gpg_key_file="/usr/share/keyrings/xanmod-archive-keyring.gpg"
-    local key_tmp=$(mktemp)
+    local key_tmp
+    key_tmp=$(mktemp)
     local gpg_ok=false
 
     # 尝试1: 从镜像源下载
@@ -3033,7 +3087,8 @@ install_xanmod_kernel() {
 
     # 检测 CPU 架构版本（使用安全临时目录）
     echo "正在检测 CPU 支持的最优内核版本..."
-    local detect_dir=$(mktemp -d)
+    local detect_dir
+    detect_dir=$(mktemp -d)
     local detect_script="${detect_dir}/check_x86-64_psabi.sh"
     local version=""
 
@@ -3047,7 +3102,8 @@ install_xanmod_kernel() {
     # 在线检测失败时，使用本地 /proc/cpuinfo 检测 CPU 支持的最高等级
     if ! [[ "$version" =~ ^[1-4]$ ]]; then
         echo -e "${gl_huang}在线检测脚本不可用，使用本地 CPU 特征检测...${gl_bai}"
-        local cpu_flags=$(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null)
+        local cpu_flags
+        cpu_flags=$(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null)
         if echo "$cpu_flags" | grep -qw 'avx512f'; then
             version="4"
         elif echo "$cpu_flags" | grep -qw 'avx2'; then
@@ -3273,45 +3329,67 @@ show_detailed_status() {
 
     ip_address
 
-    local cpu_info=$(lscpu | awk -F': +' '/Model name:/ {print $2; exit}')
+    local cpu_info
+    cpu_info=$(lscpu | awk -F': +' '/Model name:/ {print $2; exit}')
 
-    local cpu_usage_percent=$(awk '{u=$2+$4; t=$2+$4+$5; if (NR==1){u1=u; t1=t;} else printf "%.0f\n", (($2+$4-u1) * 100 / (t-t1))}' \
+    local cpu_usage_percent
+    cpu_usage_percent=$(awk '{u=$2+$4; t=$2+$4+$5; if (NR==1){u1=u; t1=t;} else printf "%.0f\n", (($2+$4-u1) * 100 / (t-t1))}' \
         <(grep 'cpu ' /proc/stat) <(sleep 1; grep 'cpu ' /proc/stat))
 
-    local cpu_cores=$(nproc)
+    local cpu_cores
+    cpu_cores=$(nproc)
 
-    local cpu_freq=$(cat /proc/cpuinfo | grep "MHz" | head -n 1 | awk '{printf "%.1f GHz\n", $4/1000}')
+    local cpu_freq
+    cpu_freq=$(cat /proc/cpuinfo | grep "MHz" | head -n 1 | awk '{printf "%.1f GHz\n", $4/1000}')
 
-    local mem_info=$(free -b | awk 'NR==2{printf "%.2f/%.2fM (%.2f%%)", $3/1024/1024, $2/1024/1024, $3*100/$2}')
+    local mem_info
+    mem_info=$(free -b | awk 'NR==2{printf "%.2f/%.2fM (%.2f%%)", $3/1024/1024, $2/1024/1024, $3*100/$2}')
 
-    local disk_info=$(df -h | awk '$NF=="/"{printf "%s/%s (%s)", $3, $2, $5}')
+    local disk_info
+    disk_info=$(df -h | awk '$NF=="/"{printf "%s/%s (%s)", $3, $2, $5}')
 
-    local ipinfo=$(curl -s ipinfo.io)
-    local country=$(echo "$ipinfo" | grep 'country' | awk -F': ' '{print $2}' | tr -d '",')
-    local city=$(echo "$ipinfo" | grep 'city' | awk -F': ' '{print $2}' | tr -d '",')
-    local isp_info=$(echo "$ipinfo" | grep 'org' | awk -F': ' '{print $2}' | tr -d '",')
+    local ipinfo
+    ipinfo=$(curl -s ipinfo.io)
+    local country
+    country=$(echo "$ipinfo" | grep 'country' | awk -F': ' '{print $2}' | tr -d '",')
+    local city
+    city=$(echo "$ipinfo" | grep 'city' | awk -F': ' '{print $2}' | tr -d '",')
+    local isp_info
+    isp_info=$(echo "$ipinfo" | grep 'org' | awk -F': ' '{print $2}' | tr -d '",')
 
-    local load=$(uptime | awk '{print $(NF-2), $(NF-1), $NF}')
-    local dns_addresses=$(awk '/^nameserver/{printf "%s ", $2} END {print ""}' /etc/resolv.conf)
+    local load
+    load=$(uptime | awk '{print $(NF-2), $(NF-1), $NF}')
+    local dns_addresses
+    dns_addresses=$(awk '/^nameserver/{printf "%s ", $2} END {print ""}' /etc/resolv.conf)
 
-    local cpu_arch=$(uname -m)
-    local hostname=$(uname -n)
-    local kernel_version=$(uname -r)
+    local cpu_arch
+    cpu_arch=$(uname -m)
+    local hostname
+    hostname=$(uname -n)
+    local kernel_version
+    kernel_version=$(uname -r)
 
-    local congestion_algorithm=$(sysctl -n net.ipv4.tcp_congestion_control)
-    local queue_algorithm=$(sysctl -n net.core.default_qdisc)
+    local congestion_algorithm
+    congestion_algorithm=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local queue_algorithm
+    queue_algorithm=$(sysctl -n net.core.default_qdisc)
 
-    local os_info=$(grep PRETTY_NAME /etc/os-release | cut -d '=' -f2 | tr -d '"')
+    local os_info
+    os_info=$(grep PRETTY_NAME /etc/os-release | cut -d '=' -f2 | tr -d '"')
 
     output_status
 
-    local current_time=$(date "+%Y-%m-%d %I:%M %p")
+    local current_time
+    current_time=$(date "+%Y-%m-%d %I:%M %p")
 
-    local swap_info=$(free -m | awk 'NR==3{used=$3; total=$2; if (total == 0) {percentage=0} else {percentage=used*100/total}; printf "%dM/%dM (%d%%)", used, total, percentage}')
+    local swap_info
+    swap_info=$(free -m | awk 'NR==3{used=$3; total=$2; if (total == 0) {percentage=0} else {percentage=used*100/total}; printf "%dM/%dM (%d%%)", used, total, percentage}')
 
-    local runtime=$(cat /proc/uptime | awk -F. '{run_days=int($1 / 86400);run_hours=int(($1 % 86400) / 3600);run_minutes=int(($1 % 3600) / 60); if (run_days > 0) printf("%d天 ", run_days); if (run_hours > 0) printf("%d时 ", run_hours); printf("%d分\n", run_minutes)}')
+    local runtime
+    runtime=$(cat /proc/uptime | awk -F. '{run_days=int($1 / 86400);run_hours=int(($1 % 86400) / 3600);run_minutes=int(($1 % 3600) / 60); if (run_days > 0) printf("%d天 ", run_days); if (run_hours > 0) printf("%d时 ", run_hours); printf("%d分\n", run_minutes)}')
 
-    local timezone=$(current_timezone)
+    local timezone
+    timezone=$(current_timezone)
 
     echo ""
     echo -e "系统信息查询"
@@ -4095,7 +4173,8 @@ dns_purify_and_harden() {
     
     # 检查1: 磁盘空间（至少需要100MB）
     echo -n "  → 检查磁盘空间... "
-    local available_space=$(df -m /etc | awk 'NR==2 {print $4}')
+    local available_space
+    available_space=$(df -m /etc | awk 'NR==2 {print $4}')
     if [ "$available_space" -lt 100 ]; then
         echo -e "${gl_hong}失败 (可用: ${available_space}MB, 需要: 100MB)${gl_bai}"
         pre_check_failed=true
@@ -4105,7 +4184,8 @@ dns_purify_and_harden() {
     
     # 检查2: 内存（至少需要50MB可用）
     echo -n "  → 检查可用内存... "
-    local available_mem=$(free -m | awk 'NR==2 {print $7}')
+    local available_mem
+    available_mem=$(free -m | awk 'NR==2 {print $7}')
     if [ "$available_mem" -lt 50 ]; then
         echo -e "${gl_hong}失败 (可用: ${available_mem}MB, 需要: 50MB)${gl_bai}"
         pre_check_failed=true
@@ -4172,7 +4252,8 @@ dns_purify_and_harden() {
     echo ""
 
     # ==================== 创建备份 ====================
-    local BACKUP_DIR="/root/.dns_purify_backup/$(date +%Y%m%d_%H%M%S)"
+    local BACKUP_DIR
+    BACKUP_DIR="/root/.dns_purify_backup/$(date +%Y%m%d_%H%M%S)"
     local PRE_STATE_DIR="$BACKUP_DIR/pre_state"
     mkdir -p "$BACKUP_DIR" "$PRE_STATE_DIR"
     echo ""
@@ -4274,7 +4355,8 @@ dns_purify_and_harden() {
     local existing_dropin
     for existing_dropin in /etc/systemd/network/*.network.d/dns-purify-override.conf; do
         [[ -f "$existing_dropin" ]] || continue
-        local dropin_key="networkd-$(echo "$existing_dropin" | sed 's|/|__|g')"
+        local dropin_key
+        dropin_key="networkd-$(echo "$existing_dropin" | sed 's|/|__|g')"
         cp -a "$existing_dropin" "$PRE_STATE_DIR/$dropin_key" 2>/dev/null || true
         echo "$existing_dropin|$dropin_key" >> "$PRE_STATE_DIR/networkd-dropins.map"
     done
@@ -4877,7 +4959,8 @@ TEMP_DNS
         
         # 2. 验证D-Bus接口是否注册成功
         if command -v busctl &>/dev/null; then
-            local dbus_status=$(busctl list 2>/dev/null | grep "org.freedesktop.resolve1" | grep -v "activatable" || echo "")
+            local dbus_status
+            dbus_status=$(busctl list 2>/dev/null | grep "org.freedesktop.resolve1" | grep -v "activatable" || echo "")
             if [ -n "$dbus_status" ]; then
                 echo -e "${gl_lv}  ✅ D-Bus 接口已成功注册${gl_bai}"
                 
@@ -5006,7 +5089,8 @@ STAGE4_TEMP
     echo ""
 
     # 检测主网卡
-    local main_interface=$(ip route | grep '^default' | awk '{print $5}' | head -n1)
+    local main_interface
+    main_interface=$(ip route | grep '^default' | awk '{print $5}' | head -n1)
 
     if [[ -n "$main_interface" ]] && command -v resolvectl &> /dev/null && [ "$resolvectl_ready" = true ]; then
         echo "  → 检测到主网卡: ${main_interface}"
@@ -5256,7 +5340,8 @@ NM_CONF
     echo ""
     
     if command -v resolvectl &> /dev/null && [[ -n "$main_interface" ]]; then
-        local verify_output=$(resolvectl status "$main_interface" 2>/dev/null || echo "")
+        local verify_output
+        verify_output=$(resolvectl status "$main_interface" 2>/dev/null || echo "")
         local verify_success=true
         
         # 检测1: Default Route（兼容不同systemd版本）
@@ -5269,8 +5354,10 @@ NM_CONF
         fi
         
         # 检测2: DNS Servers（根据用户选择的模式动态验证）
-        local escaped_dns_primary=$(echo "$INTERFACE_DNS_PRIMARY" | sed 's/\./\\./g')
-        local escaped_dns_secondary=$(echo "$INTERFACE_DNS_SECONDARY" | sed 's/\./\\./g')
+        local escaped_dns_primary
+        escaped_dns_primary=$(echo "$INTERFACE_DNS_PRIMARY" | sed 's/\./\\./g')
+        local escaped_dns_secondary
+        escaped_dns_secondary=$(echo "$INTERFACE_DNS_SECONDARY" | sed 's/\./\\./g')
         if echo "$verify_output" | grep -q "DNS Servers:.*${escaped_dns_primary}" && \
            echo "$verify_output" | grep -q "DNS Servers:.*${escaped_dns_secondary}"; then
             echo -e "  ${gl_lv}✅ DNS Servers: ${INTERFACE_DNS_PRIMARY}, ${INTERFACE_DNS_SECONDARY}${gl_bai}"
@@ -5824,7 +5911,8 @@ run_speedtest() {
         echo ""
         
         # 检测 CPU 架构
-        local cpu_arch=$(uname -m)
+        local cpu_arch
+        cpu_arch=$(uname -m)
         echo "检测到系统架构: ${gl_huang}${cpu_arch}${gl_bai}"
         echo ""
         
@@ -5915,13 +6003,15 @@ run_speedtest() {
                 echo -e "${gl_zi}正在搜索附近测速服务器...${gl_bai}"
                 
                 # 获取附近服务器列表
-                local servers_list=$(speedtest --accept-license --servers 2>/dev/null | sed -nE 's/^[[:space:]]*([0-9]+).*/\1/p' | head -n 10)
+                local servers_list
+                servers_list=$(speedtest --accept-license --servers 2>/dev/null | sed -nE 's/^[[:space:]]*([0-9]+).*/\1/p' | head -n 10)
                 
                 if [ -z "$servers_list" ]; then
                     echo -e "${gl_huang}无法获取服务器列表，使用自动选择...${gl_bai}"
                     servers_list="auto"
                 else
-                    local server_count=$(echo "$servers_list" | wc -l)
+                    local server_count
+                    server_count=$(echo "$servers_list" | wc -l)
                     echo -e "${gl_lv}✅ 找到 ${server_count} 个附近服务器${gl_bai}"
                 fi
                 echo ""
@@ -5981,7 +6071,8 @@ run_speedtest() {
                 echo -e "${gl_zi}正在获取附近服务器列表...${gl_bai}"
                 echo ""
                 
-                local server_list_output=$(speedtest --accept-license --servers 2>/dev/null | head -n 15)
+                local server_list_output
+                server_list_output=$(speedtest --accept-license --servers 2>/dev/null | head -n 15)
                 
                 if [ -z "$server_list_output" ]; then
                     echo -e "${gl_hong}❌ 无法获取服务器列表${gl_bai}"
@@ -6306,7 +6397,8 @@ iperf3_single_thread_test() {
     echo ""
     
     # 执行 iperf3 测试并保存输出
-    local test_output=$(mktemp)
+    local test_output
+    test_output=$(mktemp)
     iperf3 -c "$target_host" -P 1 $direction_flag -t "$test_duration" -f m 2>&1 | tee "$test_output"
     local exit_code=$?
     
@@ -6335,9 +6427,12 @@ iperf3_single_thread_test() {
     echo ""
     
     # 提取关键指标
-    local bandwidth=$(grep "sender\|receiver" "$test_output" | tail -1 | awk '{print $7, $8}')
-    local transfer=$(grep "sender\|receiver" "$test_output" | tail -1 | awk '{print $5, $6}')
-    local retrans=$(grep "sender" "$test_output" | tail -1 | awk '{print $9}')
+    local bandwidth
+    bandwidth=$(grep "sender\|receiver" "$test_output" | tail -1 | awk '{print $7, $8}')
+    local transfer
+    transfer=$(grep "sender\|receiver" "$test_output" | tail -1 | awk '{print $5, $6}')
+    local retrans
+    retrans=$(grep "sender" "$test_output" | tail -1 | awk '{print $9}')
     
     echo -e "${gl_kjlan}[测试信息]${gl_bai}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -6750,12 +6845,14 @@ update_xanmod_kernel() {
     echo "------------------------------------------------"
     
     # 获取当前内核版本
-    local current_kernel=$(uname -r)
+    local current_kernel
+    current_kernel=$(uname -r)
     echo -e "当前内核版本: ${gl_huang}${current_kernel}${gl_bai}"
     echo ""
     
     # 检测 CPU 架构
-    local cpu_arch=$(uname -m)
+    local cpu_arch
+    cpu_arch=$(uname -m)
     
     # ARM 架构提示：XanMod 无 ARM64 构建，此处不存在可更新的内核
     if [ "$cpu_arch" = "aarch64" ]; then
@@ -6777,7 +6874,8 @@ update_xanmod_kernel() {
 
         # 添加密钥（分步执行，避免管道 $? 问题）
         local gpg_key_file="/usr/share/keyrings/xanmod-archive-keyring.gpg"
-        local key_tmp=$(mktemp)
+        local key_tmp
+        key_tmp=$(mktemp)
         local gpg_ok=false
 
         if wget -qO "$key_tmp" "${gh_proxy}raw.githubusercontent.com/kejilion/sh/main/archive.key" 2>/dev/null && \
@@ -6815,7 +6913,8 @@ update_xanmod_kernel() {
     fi
 
     # 检查已安装的 XanMod 内核包（使用 ^ii 过滤，排除已卸载残留）
-    local installed_packages=$(dpkg -l | grep -E '^ii\s+linux-.*xanmod' | awk '{print $2}')
+    local installed_packages
+    installed_packages=$(dpkg -l | grep -E '^ii\s+linux-.*xanmod' | awk '{print $2}')
     
     if [ -z "$installed_packages" ]; then
         echo -e "${gl_hong}错误: 未检测到已安装的 XanMod 内核${gl_bai}"
@@ -6830,7 +6929,8 @@ update_xanmod_kernel() {
     echo ""
     
     # 检查是否有可用更新
-    local upgradable=$(apt list --upgradable 2>/dev/null | grep xanmod)
+    local upgradable
+    upgradable=$(apt list --upgradable 2>/dev/null | grep xanmod)
     
     if [ -z "$upgradable" ]; then
         local cpu_level
@@ -6940,7 +7040,8 @@ uninstall_xanmod() {
     echo ""
 
     # 安全检查：确认系统中有回退内核可用
-    local non_xanmod_kernels=$(dpkg -l 2>/dev/null | grep '^ii' | grep 'linux-image-' | grep -v 'xanmod' | grep -v 'dbg' | wc -l)
+    local non_xanmod_kernels
+    non_xanmod_kernels=$(dpkg -l 2>/dev/null | grep '^ii' | grep 'linux-image-' | grep -v 'xanmod' | grep -v 'dbg' | wc -l)
     if [ "$non_xanmod_kernels" -eq 0 ]; then
         echo -e "${gl_hong}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
         echo -e "${gl_hong}❌ 安全检查未通过：未检测到非 XanMod 的回退内核！${gl_bai}"
@@ -7123,7 +7224,8 @@ rc_file_has_bbr_alias() {
 write_cleaned_rc_file() {
     local rc_file="$1"
     local new_content="$2"
-    local backup_file="${rc_file}.bak.uninstall.$(date +%Y%m%d_%H%M%S).$$"
+    local backup_file
+    backup_file="${rc_file}.bak.uninstall.$(date +%Y%m%d_%H%M%S).$$"
 
     if cmp -s "$rc_file" "$new_content"; then
         return 2
@@ -7186,7 +7288,8 @@ uninstall_all() {
     echo -e "${gl_huang}[1/8] 检查并卸载 XanMod 内核...${gl_bai}"
     if dpkg -l | grep -qE '^ii\s+linux-.*xanmod'; then
         # 安全检查：确认有回退内核
-        local non_xanmod_kernels=$(dpkg -l 2>/dev/null | grep '^ii' | grep 'linux-image-' | grep -v 'xanmod' | grep -v 'dbg' | wc -l)
+        local non_xanmod_kernels
+        non_xanmod_kernels=$(dpkg -l 2>/dev/null | grep '^ii' | grep 'linux-image-' | grep -v 'xanmod' | grep -v 'dbg' | wc -l)
         if [ "$non_xanmod_kernels" -eq 0 ]; then
             echo -e "  ${gl_hong}❌ 未检测到回退内核，跳过卸载以防系统无法启动${gl_bai}"
             echo -e "  ${gl_huang}请先安装默认内核: apt install -y linux-image-amd64${gl_bai}"
@@ -7606,7 +7709,8 @@ get_system_type_snell() {
 
 # 等待包管理器锁（Snell）
 wait_for_package_manager_snell() {
-    local system_type=$(get_system_type_snell)
+    local system_type
+    system_type=$(get_system_type_snell)
     if [ "$system_type" = "debian" ]; then
         while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
             echo -e "${SNELL_YELLOW}等待其他 apt 进程完成${SNELL_RESET}"
@@ -7617,7 +7721,8 @@ wait_for_package_manager_snell() {
 
 # 安装必要的软件包（Snell）
 install_required_packages_snell() {
-    local system_type=$(get_system_type_snell)
+    local system_type
+    system_type=$(get_system_type_snell)
     echo -e "${SNELL_GREEN}安装必要的软件包${SNELL_RESET}"
 
     if [ "$system_type" = "debian" ]; then
@@ -8921,7 +9026,8 @@ uninstall_snell() {
             # 卸载新版多实例
             for service_file in /etc/systemd/system/snell-*.service; do
                 if [ -f "$service_file" ]; then
-                    local port=$(echo "$service_file" | sed -E 's/.*snell-([0-9]+)\.service/\1/')
+                    local port
+                    port=$(echo "$service_file" | sed -E 's/.*snell-([0-9]+)\.service/\1/')
                     echo "卸载端口 $port ..."
                     systemctl stop "snell-${port}.service"
                     systemctl disable "snell-${port}.service"
@@ -12760,7 +12866,8 @@ save_cn_ipset() {
 restore_cn_ipset() {
     # 如果 ipset 已存在且有数据，跳过恢复
     if ipset list "$CN_IPSET_NAME" &>/dev/null; then
-        local ip_count=$(ipset list "$CN_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo "0")
+        local ip_count
+        ip_count=$(ipset list "$CN_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo "0")
         if [ "$ip_count" -gt 0 ]; then
             return 0
         fi
@@ -12823,7 +12930,8 @@ EOF
 
     # 检查：如果 ipset 在内存中存在但保存文件不存在，自动保存一份（升级兼容）
     if ipset list "$CN_IPSET_NAME" &>/dev/null; then
-        local ip_count=$(ipset list "$CN_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo "0")
+        local ip_count
+        ip_count=$(ipset list "$CN_IPSET_NAME" 2>/dev/null | grep -c '^[0-9]' || echo "0")
         if [ "$ip_count" -gt 0 ] && [ ! -f "$CN_IPSET_SAVE_FILE" ]; then
             echo -e "${gl_huang}检测到内存中有 IP 数据但未持久化，正在自动保存...${gl_bai}"
             save_cn_ipset
@@ -12855,7 +12963,8 @@ download_china_ip_list() {
         echo "尝试从 $source 下载..."
         if curl -sSL --connect-timeout 10 --max-time 60 "$source" -o "$CN_IP_LIST_FILE" 2>/dev/null; then
             if [ -s "$CN_IP_LIST_FILE" ]; then
-                local line_count=$(wc -l < "$CN_IP_LIST_FILE")
+                local line_count
+                line_count=$(wc -l < "$CN_IP_LIST_FILE")
                 if [ "$line_count" -gt 1000 ]; then
                     echo -e "${gl_lv}✅ 下载成功，共 $line_count 条 IP 段${gl_bai}"
                     downloaded=1
@@ -12992,7 +13101,8 @@ add_port_block_rule() {
         iptables -I INPUT -p udp --dport "$port" -m set --match-set "$CN_IPSET_NAME" src -j DROP
 
     # 保存到配置文件
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo "${port}|${timestamp}|${note}" >> "$CN_BLOCK_CONFIG"
 
     # 保存 iptables 规则
@@ -13349,7 +13459,8 @@ menu_list_blocked_ports() {
 
     # 显示 ipset 统计
     if ipset list "$CN_IPSET_NAME" &>/dev/null; then
-        local ip_count=$(ipset list "$CN_IPSET_NAME" | grep -c '^[0-9]')
+        local ip_count
+        ip_count=$(ipset list "$CN_IPSET_NAME" | grep -c '^[0-9]')
         echo -e "${gl_zi}IP 地址库: $ip_count 条中国 IP 段${gl_bai}"
     fi
 
@@ -13366,7 +13477,8 @@ menu_update_ip_database() {
     echo ""
 
     if ipset list "$CN_IPSET_NAME" &>/dev/null; then
-        local ip_count=$(ipset list "$CN_IPSET_NAME" | grep -c '^[0-9]')
+        local ip_count
+        ip_count=$(ipset list "$CN_IPSET_NAME" | grep -c '^[0-9]')
         echo -e "${gl_zi}当前 IP 地址库: $ip_count 条中国 IP 段${gl_bai}"
         echo ""
     fi
@@ -13479,7 +13591,8 @@ manage_cn_ip_block() {
         echo ""
 
         # 显示状态
-        local blocked_count=$(get_blocked_ports | wc -l)
+        local blocked_count
+        blocked_count=$(get_blocked_ports | wc -l)
         local ipset_count=0
         if ipset list "$CN_IPSET_NAME" &>/dev/null; then
             ipset_count=$(ipset list "$CN_IPSET_NAME" | grep -c '^[0-9]')
@@ -13560,7 +13673,8 @@ manage_cn_ip_block() {
                 echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
                 echo ""
 
-                local blocked_count=$(get_blocked_ports | wc -l)
+                local blocked_count
+                blocked_count=$(get_blocked_ports | wc -l)
                 echo -e "${gl_huang}⚠ 将删除所有 $blocked_count 条封锁规则${gl_bai}"
                 echo ""
                 read -p "确认执行？[y/N]: " confirm
@@ -13697,14 +13811,16 @@ detect_singbox_cmd() {
 
         # 如果是符号链接，解析实际路径
         if [ -L "$path" ]; then
-            local real_path=$(readlink -f "$path")
+            local real_path
+            real_path=$(readlink -f "$path")
             detection_debug+="是符号链接 → $real_path\n"
             path="$real_path"
         fi
 
         # 验证是 ELF 二进制文件（如果 file 命令可用）
         if command -v file >/dev/null 2>&1; then
-            local file_type=$(file "$path" 2>/dev/null)
+            local file_type
+            file_type=$(file "$path" 2>/dev/null)
             if echo "$file_type" | grep -q "ELF"; then
                 DETECTED_SINGBOX_CMD="$path"
                 break
@@ -13721,17 +13837,20 @@ detect_singbox_cmd() {
     if [ -z "$DETECTED_SINGBOX_CMD" ]; then
         for cmd in sing-box sb; do
             if command -v "$cmd" &>/dev/null; then
-                local cmd_path=$(which "$cmd")
+                local cmd_path
+                cmd_path=$(which "$cmd")
                 detection_debug+="正在检测 PATH 命令: $cmd → $cmd_path ... "
 
                 if [ -L "$cmd_path" ]; then
-                    local real_path=$(readlink -f "$cmd_path")
+                    local real_path
+                    real_path=$(readlink -f "$cmd_path")
                     detection_debug+="是符号链接 → $real_path\n"
                     cmd_path="$real_path"
                 fi
 
                 if command -v file >/dev/null 2>&1; then
-                    local file_type=$(file "$cmd_path" 2>/dev/null)
+                    local file_type
+                    file_type=$(file "$cmd_path" 2>/dev/null)
                     if echo "$file_type" | grep -q "ELF"; then
                         DETECTED_SINGBOX_CMD="$cmd_path"
                         break
@@ -13844,9 +13963,12 @@ view_socks5() {
     fi
     
     # 解析配置文件
-    local port=$(jq -r '.inbounds[0].listen_port // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
-    local username=$(jq -r '.inbounds[0].users[0].username // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
-    local password=$(jq -r '.inbounds[0].users[0].password // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local port
+    port=$(jq -r '.inbounds[0].listen_port // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local username
+    username=$(jq -r '.inbounds[0].users[0].username // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local password
+    password=$(jq -r '.inbounds[0].users[0].password // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
     
     if [ -z "$port" ] || [ -z "$username" ]; then
         echo -e "${gl_hong}❌ 配置文件格式错误或为空${gl_bai}"
@@ -13858,7 +13980,8 @@ view_socks5() {
     fi
     
     # 获取服务器IP（带格式验证）
-    local listen_addr=$(jq -r '.inbounds[0].listen // "0.0.0.0"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local listen_addr
+    listen_addr=$(jq -r '.inbounds[0].listen // "0.0.0.0"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
     local server_ip=""
     if [ "$listen_addr" = "::" ]; then
         server_ip=$(get_server_ip "ipv6")
@@ -13937,9 +14060,12 @@ modify_socks5() {
     fi
     
     # 读取当前配置
-    local current_port=$(jq -r '.inbounds[0].listen_port // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
-    local current_user=$(jq -r '.inbounds[0].users[0].username // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
-    local current_pass=$(jq -r '.inbounds[0].users[0].password // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local current_port
+    current_port=$(jq -r '.inbounds[0].listen_port // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local current_user
+    current_user=$(jq -r '.inbounds[0].users[0].username // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local current_pass
+    current_pass=$(jq -r '.inbounds[0].users[0].password // empty' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
     
     echo -e "${gl_zi}当前配置：${gl_bai}"
     echo "  端口: ${current_port}"
@@ -14098,7 +14224,8 @@ modify_socks5() {
     local SINGBOX_CMD="$DETECTED_SINGBOX_CMD"
 
     # 读取现有的 listen 地址（保留用户之前的 IPv4/IPv6 选择）
-    local current_listen=$(jq -r '.inbounds[0].listen // "0.0.0.0"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+    local current_listen
+    current_listen=$(jq -r '.inbounds[0].listen // "0.0.0.0"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
 
     # 更新配置文件
     echo ""
@@ -14235,7 +14362,8 @@ delete_socks5() {
     if [ "$has_config" = true ]; then
         echo "  • 配置目录: ${SOCKS5_CONFIG_DIR}"
         if [ -f "$SOCKS5_CONFIG_FILE" ]; then
-            local port=$(jq -r '.inbounds[0].listen_port // "未知"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+            local port
+            port=$(jq -r '.inbounds[0].listen_port // "未知"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
             echo "    端口: ${port}"
         fi
     fi
@@ -14289,8 +14417,10 @@ manage_socks5() {
         
         # 检查当前状态
         if [ -f "$SOCKS5_CONFIG_FILE" ]; then
-            local port=$(jq -r '.inbounds[0].listen_port // "未知"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
-            local user=$(jq -r '.inbounds[0].users[0].username // "未知"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+            local port
+            port=$(jq -r '.inbounds[0].listen_port // "未知"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
+            local user
+            user=$(jq -r '.inbounds[0].users[0].username // "未知"' "$SOCKS5_CONFIG_FILE" 2>/dev/null)
             
             if systemctl is-active --quiet "$SOCKS5_SERVICE_NAME"; then
                 echo -e "  当前状态: ${gl_lv}✅ 运行中${gl_bai}"
@@ -14471,7 +14601,8 @@ install_singbox_binary() {
             
             # 查找并移动二进制文件（兼容不同版本的目录结构）
             # 注意：不使用 -executable 参数，因为解压后的文件可能还没有执行权限
-            local binary_path=$(find "$temp_dir" -name "sing-box" -type f 2>/dev/null | head -1)
+            local binary_path
+            binary_path=$(find "$temp_dir" -name "sing-box" -type f 2>/dev/null | head -1)
             
             if [ -n "$binary_path" ] && [ -f "$binary_path" ]; then
                 mv "$binary_path" /etc/sing-box/sing-box
@@ -14497,7 +14628,8 @@ install_singbox_binary() {
             echo -e "${gl_zi}[5/5] 验证安装...${gl_bai}"
             
             if /etc/sing-box/sing-box version >/dev/null 2>&1; then
-                local installed_version=$(/etc/sing-box/sing-box version 2>/dev/null | head -1)
+                local installed_version
+                installed_version=$(/etc/sing-box/sing-box version 2>/dev/null | head -1)
                 echo -e "${gl_lv}  ✓ ${installed_version}${gl_bai}"
                 echo ""
                 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -14979,7 +15111,8 @@ get_substore_instances() {
     if [ -d "/root/sub-store-configs" ]; then
         for config in /root/sub-store-configs/store-*.yaml; do
             if [ -f "$config" ]; then
-                local instance_name=$(basename "$config" .yaml)
+                local instance_name
+                instance_name=$(basename "$config" .yaml)
                 instances+=("$instance_name")
             fi
         done
@@ -15081,7 +15214,8 @@ install_substore_instance() {
     # 输入访问路径
     local access_path
     while true; do
-        local random_path=$(generate_substore_random_path)
+        local random_path
+        random_path=$(generate_substore_random_path)
         echo -e "${gl_zi}访问路径说明：${gl_bai}"
         echo "  - 路径会自动添加开头的 /"
         echo "  - 建议使用随机路径（更安全）"
@@ -15316,7 +15450,8 @@ configure_cf_tunnel() {
                 echo ""
                 echo "正在下载 cloudflared..."
                 
-                local cpu_arch=$(uname -m)
+                local cpu_arch
+                cpu_arch=$(uname -m)
                 local download_url
                 
                 case "$cpu_arch" in
@@ -15422,7 +15557,8 @@ configure_cf_tunnel() {
     echo "隧道名称: $tunnel_name"
     
     # 检查隧道是否已存在
-    local existing_tunnel_id=$(cloudflared tunnel list 2>/dev/null | grep "$tunnel_name" | awk '{print $1}')
+    local existing_tunnel_id
+    existing_tunnel_id=$(cloudflared tunnel list 2>/dev/null | grep "$tunnel_name" | awk '{print $1}')
     
     if [ -n "$existing_tunnel_id" ]; then
         echo ""
@@ -15660,7 +15796,8 @@ update_substore_instance() {
     echo -e "${gl_zi}已部署的实例：${gl_bai}"
     for i in "${!instances[@]}"; do
         local instance_name="${instances[$i]}"
-        local instance_num=$(echo "$instance_name" | sed 's/store-//')
+        local instance_num
+        instance_num=$(echo "$instance_name" | sed 's/store-//')
         local container_name="sub-store-$instance_num"
         
         if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
@@ -15698,7 +15835,8 @@ update_substore_instance() {
         
         for instance in "${instances[@]}"; do
             local config_file="/root/sub-store-configs/${instance}.yaml"
-            local instance_num=$(echo "$instance" | sed 's/store-//')
+            local instance_num
+            instance_num=$(echo "$instance" | sed 's/store-//')
             
             echo ""
             echo "正在更新实例: $instance"
@@ -15722,7 +15860,8 @@ update_substore_instance() {
     
     local instance_name="${instances[$((choice-1))]}"
     local config_file="/root/sub-store-configs/${instance_name}.yaml"
-    local instance_num=$(echo "$instance_name" | sed 's/store-//')
+    local instance_num
+    instance_num=$(echo "$instance_name" | sed 's/store-//')
     
     echo ""
     echo "准备更新实例: $instance_name"
@@ -15768,7 +15907,8 @@ uninstall_substore_instance() {
     echo -e "${gl_zi}已部署的实例：${gl_bai}"
     for i in "${!instances[@]}"; do
         local instance_name="${instances[$i]}"
-        local instance_num=$(echo "$instance_name" | sed 's/store-//')
+        local instance_num
+        instance_num=$(echo "$instance_name" | sed 's/store-//')
         local container_name="sub-store-$instance_num"
         
         if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
@@ -15796,7 +15936,8 @@ uninstall_substore_instance() {
     
     local instance_name="${instances[$((choice-1))]}"
     local config_file="/root/sub-store-configs/${instance_name}.yaml"
-    local instance_num=$(echo "$instance_name" | sed 's/store-//')
+    local instance_num
+    instance_num=$(echo "$instance_name" | sed 's/store-//')
     
     echo ""
     echo -e "${gl_huang}将要卸载实例: $instance_name${gl_bai}"
@@ -15828,7 +15969,8 @@ uninstall_substore_instance() {
 
     if [[ "$delete_data" =~ ^[Yy]$ ]]; then
         # 从配置文件中提取数据目录(Bug 修复:先去掉 "- " 前缀,避免 rm 失败)
-        local data_dir=$(grep -A 1 "volumes:" "$config_file" | tail -n 1 \
+        local data_dir
+        data_dir=$(grep -A 1 "volumes:" "$config_file" | tail -n 1 \
             | sed 's/^[[:space:]]*-[[:space:]]*//' \
             | awk -F':' '{print $1}' \
             | xargs)
@@ -15869,7 +16011,8 @@ list_substore_instances() {
     
     for instance in "${instances[@]}"; do
         local config_file="/root/sub-store-configs/${instance}.yaml"
-        local instance_num=$(echo "$instance" | sed 's/store-//')
+        local instance_num
+        instance_num=$(echo "$instance" | sed 's/store-//')
         local container_name="sub-store-$instance_num"
         
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -15884,10 +16027,13 @@ list_substore_instances() {
         
         # 提取配置信息
         if [ -f "$config_file" ]; then
-            local api_port=$(grep "SUB_STORE_BACKEND_API_PORT:" "$config_file" | awk '{print $2}')
-            local access_path=$(grep "SUB_STORE_FRONTEND_BACKEND_PATH:" "$config_file" | awk '{print $2}')
+            local api_port
+            api_port=$(grep "SUB_STORE_BACKEND_API_PORT:" "$config_file" | awk '{print $2}')
+            local access_path
+            access_path=$(grep "SUB_STORE_FRONTEND_BACKEND_PATH:" "$config_file" | awk '{print $2}')
             # Bug 修复:volumes 解析去掉 "- " 前缀
-            local data_dir=$(grep -A 1 "volumes:" "$config_file" | tail -n 1 \
+            local data_dir
+            data_dir=$(grep -A 1 "volumes:" "$config_file" | tail -n 1 \
                 | sed 's/^[[:space:]]*-[[:space:]]*//' \
                 | awk -F':' '{print $1}' \
                 | xargs)
@@ -16007,6 +16153,10 @@ cf_helper_install_binary() {
         return 1
     }
     if wget -q --show-progress -O "$tmp" "$url" && [ -s "$tmp" ]; then
+        if ! verify_binary_download "$tmp" elf; then
+            echo -e "${gl_hong}cloudflared 下载内容非法，已中止安装${gl_bai}" >&2
+            rm -f "$tmp"; return 1
+        fi
         chmod 755 "$tmp"
         mv "$tmp" "$CF_BINARY_PATH"
         local ver
@@ -16333,7 +16483,8 @@ cf_helper_migrate_legacy() {
 
     cf_helper_init_dirs
 
-    local backup_dir="$CF_HOME/.backup-$(date +%Y%m%d-%H%M%S)"
+    local backup_dir
+    backup_dir="$CF_HOME/.backup-$(date +%Y%m%d-%H%M%S)"
     local migrated=0
     # 懒建备份目录:只在实际有东西搬时才 mkdir,避免空备份目录
     mkdir -p "$backup_dir"
@@ -16599,7 +16750,8 @@ cf_tunnel_add() {
     # --- 步骤 1/6 ---
     echo -e "${gl_zi}[步骤 1/6] 隧道名称${gl_bai}"
     echo "  只允许 a-z A-Z 0-9 _ - .,开头非 -/.,长度 1-64"
-    local default_name="tunnel-$(openssl rand -hex 4 2>/dev/null || echo $RANDOM)"
+    local default_name
+    default_name="tunnel-$(openssl rand -hex 4 2>/dev/null || echo $RANDOM)"
     echo "  留空使用随机: $default_name"
     echo ""
     local tunnel_name
@@ -16906,7 +17058,8 @@ cf_tunnel_edit_ingress() {
     echo ""
     read -e -p "按回车打开编辑器..."
 
-    local backup="${cfg}.bak.$(date +%s)"
+    local backup
+    backup="${cfg}.bak.$(date +%s)"
     cp "$cfg" "$backup"
 
     "$editor" "$cfg"
@@ -17166,7 +17319,8 @@ cf_tunnel_migrate_advanced() {
             cf_helper_migrate_legacy
             ;;
         2)
-            local bak="$CF_HOME/.backup-manual-$(date +%Y%m%d-%H%M%S)"
+            local bak
+            bak="$CF_HOME/.backup-manual-$(date +%Y%m%d-%H%M%S)"
             mkdir -p "$bak"
             cp -r "$CF_HOME"/{cert.pem,credentials,configs} "$bak/" 2>/dev/null
             echo -e "${gl_lv}✅ 备份到 $bak${gl_bai}"
@@ -17402,7 +17556,8 @@ install_cloudflared() {
 
     echo -e "${gl_huang}正在安装 cloudflared...${gl_bai}"
 
-    local cpu_arch=$(uname -m)
+    local cpu_arch
+    cpu_arch=$(uname -m)
     local download_url
 
     case "$cpu_arch" in
@@ -17534,7 +17689,8 @@ _legacy_quick_deploy_cf_tunnel() {
     fi
 
     # 生成安全的隧道名称
-    local tunnel_name=$(echo "$app_name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+    local tunnel_name
+    tunnel_name=$(echo "$app_name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
     tunnel_name="tunnel-$tunnel_name-$(date +%s)"
 
     echo ""
@@ -17592,7 +17748,8 @@ _legacy_quick_deploy_cf_tunnel() {
     fi
 
     # 获取 tunnel ID
-    local tunnel_id=$(cloudflared tunnel list | grep "$tunnel_name" | awk '{print $1}')
+    local tunnel_id
+    tunnel_id=$(cloudflared tunnel list | grep "$tunnel_name" | awk '{print $1}')
 
     if [ -z "$tunnel_id" ]; then
         echo -e "${gl_hong}❌ 无法获取 tunnel ID${gl_bai}"
@@ -17670,8 +17827,10 @@ EOF
         echo ""
 
         # 保存配置到 JSON
-        local timestamp=$(date +%s)
-        local temp_file=$(mktemp)
+        local timestamp
+        timestamp=$(date +%s)
+        local temp_file
+        temp_file=$(mktemp)
 
         if command -v jq &>/dev/null; then
             jq --arg name "$app_name" \
@@ -17714,7 +17873,8 @@ list_reverse_proxies() {
     # 列出所有 cloudflared 服务
     # Bug 修复:grep "cloudflared-tunnel" 会漏掉所有 tunnel_name 中不含 "tunnel" 的服务
     # 改成匹配 "cloudflared-" 前缀的所有服务
-    local services=$(systemctl list-units --type=service --all 2>/dev/null | grep -oE '^[[:space:]]*cloudflared-[^[:space:]]+\.service' | awk '{print $1}')
+    local services
+    services=$(systemctl list-units --type=service --all 2>/dev/null | grep -oE '^[[:space:]]*cloudflared-[^[:space:]]+\.service' | awk '{print $1}')
 
     if [ -z "$services" ]; then
         echo -e "${gl_huang}暂无已部署的反向代理${gl_bai}"
@@ -17726,7 +17886,8 @@ list_reverse_proxies() {
     local count=0
     for service in $services; do
         count=$((count + 1))
-        local tunnel_name=$(echo "$service" | sed 's/cloudflared-//' | sed 's/.service//')
+        local tunnel_name
+        tunnel_name=$(echo "$service" | sed 's/cloudflared-//' | sed 's/.service//')
 
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "[$count] $tunnel_name"
@@ -17744,8 +17905,10 @@ list_reverse_proxies() {
         config_file=$(_cf_get_config_from_service "$service" 2>/dev/null)
         [ -z "$config_file" ] && config_file="$REVERSE_PROXY_CONFIG_DIR/cf-tunnel/$tunnel_name.yaml"
         if [ -f "$config_file" ]; then
-            local domain=$(grep "hostname:" "$config_file" | head -1 | awk '{print $3}')
-            local port=$(grep "service:" "$config_file" | head -1 | sed -nE 's/.*:([0-9]+).*/\1/p')
+            local domain
+            domain=$(grep "hostname:" "$config_file" | head -1 | awk '{print $3}')
+            local port
+            port=$(grep "service:" "$config_file" | head -1 | sed -nE 's/.*:([0-9]+).*/\1/p')
 
             echo "  域名: https://$domain"
             echo "  端口: $port"
@@ -17775,7 +17938,8 @@ delete_reverse_proxy() {
     # 列出所有服务
     # Bug 修复:grep "cloudflared-tunnel" 会漏掉所有 tunnel_name 中不含 "tunnel" 的服务
     # 改成匹配 "cloudflared-" 前缀的所有服务
-    local services=$(systemctl list-units --type=service --all 2>/dev/null | grep -oE '^[[:space:]]*cloudflared-[^[:space:]]+\.service' | awk '{print $1}')
+    local services
+    services=$(systemctl list-units --type=service --all 2>/dev/null | grep -oE '^[[:space:]]*cloudflared-[^[:space:]]+\.service' | awk '{print $1}')
 
     if [ -z "$services" ]; then
         echo -e "${gl_huang}暂无已部署的反向代理${gl_bai}"
@@ -17789,7 +17953,8 @@ delete_reverse_proxy() {
 
     for service in "${services_array[@]}"; do
         count=$((count + 1))
-        local tunnel_name=$(echo "$service" | sed 's/cloudflared-//' | sed 's/.service//')
+        local tunnel_name
+        tunnel_name=$(echo "$service" | sed 's/cloudflared-//' | sed 's/.service//')
 
         if systemctl is-active --quiet "$service"; then
             echo -e "  $count. $tunnel_name ${gl_lv}[运行中]${gl_bai}"
@@ -17812,7 +17977,8 @@ delete_reverse_proxy() {
     fi
 
     local selected_service="${services_array[$((choice-1))]}"
-    local tunnel_name=$(echo "$selected_service" | sed 's/cloudflared-//' | sed 's/.service//')
+    local tunnel_name
+    tunnel_name=$(echo "$selected_service" | sed 's/cloudflared-//' | sed 's/.service//')
 
     echo ""
     echo -e "${gl_huang}将要删除: $tunnel_name${gl_bai}"
@@ -17957,7 +18123,8 @@ open_webui_deploy() {
     echo ""
 
     # 检查是否已安装
-    local status=$(open_webui_check_status)
+    local status
+    status=$(open_webui_check_status)
     if [ "$status" != "not_installed" ]; then
         echo -e "${gl_huang}⚠️ Open WebUI 已安装${gl_bai}"
         read -e -p "是否重新部署？(y/n) [n]: " reinstall
@@ -18072,7 +18239,8 @@ open_webui_deploy() {
     sleep 5
 
     # 获取服务器 IP
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     echo ""
     echo -e "${gl_lv}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
@@ -18105,7 +18273,8 @@ open_webui_update() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(open_webui_check_status)
+    local status
+    status=$(open_webui_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Open WebUI 未安装，请先执行一键部署${gl_bai}"
         break_end
@@ -18122,7 +18291,8 @@ open_webui_update() {
         docker rm "$OPEN_WEBUI_CONTAINER_NAME"
 
         # 获取保存的端口
-        local port=$(open_webui_get_port)
+        local port
+        port=$(open_webui_get_port)
 
         # 重新创建容器
         docker run -d -p ${port}:8080 \
@@ -18153,9 +18323,12 @@ open_webui_status() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(open_webui_check_status)
-    local port=$(open_webui_get_port)
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local status
+    status=$(open_webui_check_status)
+    local port
+    port=$(open_webui_get_port)
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     case "$status" in
         "running")
@@ -18248,14 +18421,16 @@ open_webui_change_port() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(open_webui_check_status)
+    local status
+    status=$(open_webui_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Open WebUI 未安装${gl_bai}"
         break_end
         return 1
     fi
 
-    local current_port=$(open_webui_get_port)
+    local current_port
+    current_port=$(open_webui_get_port)
     echo -e "当前端口: ${gl_huang}$current_port${gl_bai}"
     echo ""
 
@@ -18291,7 +18466,8 @@ open_webui_change_port() {
 
     if [ $? -eq 0 ]; then
         echo "$new_port" > "$OPEN_WEBUI_PORT_FILE"
-        local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+        local server_ip
+        server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
         echo ""
         echo -e "${gl_lv}✅ 端口修改成功${gl_bai}"
         echo -e "新访问地址: ${gl_huang}http://${server_ip}:${new_port}${gl_bai}"
@@ -18310,7 +18486,8 @@ open_webui_uninstall() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(open_webui_check_status)
+    local status
+    status=$(open_webui_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Open WebUI 未安装${gl_bai}"
         break_end
@@ -18360,8 +18537,10 @@ manage_open_webui() {
         echo ""
 
         # 显示当前状态
-        local status=$(open_webui_check_status)
-        local port=$(open_webui_get_port)
+        local status
+        status=$(open_webui_check_status)
+        local port
+        port=$(open_webui_get_port)
 
         case "$status" in
             "running")
@@ -18461,9 +18640,11 @@ crs_get_port() {
         cat "$CRS_PORT_FILE"
     else
         # 尝试从配置文件读取
-        local install_dir=$(crs_get_install_dir)
+        local install_dir
+        install_dir=$(crs_get_install_dir)
         if [ -f "$install_dir/config/config.js" ]; then
-            local port=$(sed -nE 's/.*port:[[:space:]]*([0-9]+).*/\1/p' "$install_dir/config/config.js" 2>/dev/null | head -1)
+            local port
+            port=$(sed -nE 's/.*port:[[:space:]]*([0-9]+).*/\1/p' "$install_dir/config/config.js" 2>/dev/null | head -1)
             if [ -n "$port" ]; then
                 echo "$port"
                 return
@@ -18478,7 +18659,8 @@ crs_check_status() {
     # 检查 crs 命令是否存在
     if ! command -v crs &>/dev/null; then
         # 检查安装目录是否存在
-        local install_dir=$(crs_get_install_dir)
+        local install_dir
+        install_dir=$(crs_get_install_dir)
         if [ -d "$install_dir" ]; then
             echo "installed_no_command"
         else
@@ -18488,14 +18670,16 @@ crs_check_status() {
     fi
 
     # 使用 crs status 检查
-    local status_output=$(crs status 2>&1)
+    local status_output
+    status_output=$(crs status 2>&1)
     if echo "$status_output" | grep -qi "running\|online\|started"; then
         echo "running"
     elif echo "$status_output" | grep -qi "stopped\|offline\|not running"; then
         echo "stopped"
     else
         # 通过端口检测
-        local port=$(crs_get_port)
+        local port
+        port=$(crs_get_port)
         if ss -lntp 2>/dev/null | grep -q ":${port} "; then
             echo "running"
         else
@@ -18522,7 +18706,8 @@ crs_deploy() {
     echo ""
 
     # 检查是否已安装
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" != "not_installed" ]; then
         echo -e "${gl_huang}⚠️ CRS 已安装${gl_bai}"
         read -e -p "是否重新部署？这将保留数据但重装服务 (y/n) [n]: " reinstall
@@ -18539,7 +18724,8 @@ crs_deploy() {
     echo -e "${gl_kjlan}[1/4] 下载安装脚本...${gl_bai}"
 
     # 创建临时目录
-    local temp_dir=$(mktemp -d)
+    local temp_dir
+    temp_dir=$(mktemp -d)
     cd "$temp_dir" || { echo -e "${gl_hong}❌ 创建临时目录失败${gl_bai}"; break_end; return 1; }
 
     # 下载 manage.sh
@@ -18658,7 +18844,8 @@ crs_deploy() {
     sleep 3
 
     # 获取服务器 IP
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     # 检查服务状态
     if command -v crs &>/dev/null; then
@@ -18708,7 +18895,8 @@ crs_update() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装，请先执行一键部署${gl_bai}"
         break_end
@@ -18742,10 +18930,14 @@ crs_status() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(crs_check_status)
-    local port=$(crs_get_port)
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
-    local install_dir=$(crs_get_install_dir)
+    local status
+    status=$(crs_check_status)
+    local port
+    port=$(crs_get_port)
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local install_dir
+    install_dir=$(crs_get_install_dir)
 
     case "$status" in
         "running")
@@ -18795,7 +18987,8 @@ crs_logs() {
     echo -e "${gl_zi}按 Ctrl+C 退出日志查看${gl_bai}"
     echo ""
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
@@ -18806,7 +18999,8 @@ crs_logs() {
         crs logs
     else
         # 尝试查看日志文件
-        local install_dir=$(crs_get_install_dir)
+        local install_dir
+        install_dir=$(crs_get_install_dir)
         if [ -d "$install_dir/logs" ]; then
             tail -f "$install_dir/logs/"*.log 2>/dev/null || echo "无法读取日志文件"
         else
@@ -18820,7 +19014,8 @@ crs_start() {
     echo ""
     echo "正在启动 CRS..."
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
@@ -18831,8 +19026,10 @@ crs_start() {
         crs start
         sleep 2
         if [ "$(crs_check_status)" = "running" ]; then
-            local port=$(crs_get_port)
-            local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+            local port
+            port=$(crs_get_port)
+            local server_ip
+            server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
             echo ""
             echo -e "${gl_lv}✅ 服务已启动${gl_bai}"
             echo -e "访问地址: ${gl_huang}http://${server_ip}:${port}/web${gl_bai}"
@@ -18851,7 +19048,8 @@ crs_stop() {
     echo ""
     echo "正在停止 CRS..."
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
@@ -18878,7 +19076,8 @@ crs_restart() {
     echo ""
     echo "正在重启 CRS..."
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
@@ -18889,8 +19088,10 @@ crs_restart() {
         crs restart
         sleep 2
         if [ "$(crs_check_status)" = "running" ]; then
-            local port=$(crs_get_port)
-            local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+            local port
+            port=$(crs_get_port)
+            local server_ip
+            server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
             echo ""
             echo -e "${gl_lv}✅ 服务已重启${gl_bai}"
             echo -e "访问地址: ${gl_huang}http://${server_ip}:${port}/web${gl_bai}"
@@ -18912,14 +19113,16 @@ crs_show_admin() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
         return 1
     fi
 
-    local install_dir=$(crs_get_install_dir)
+    local install_dir
+    install_dir=$(crs_get_install_dir)
     local init_file="$install_dir/data/init.json"
 
     if [ -f "$init_file" ]; then
@@ -18927,12 +19130,16 @@ crs_show_admin() {
         echo ""
 
         # 解析 JSON 并显示
-        local username=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$init_file" 2>/dev/null | head -1)
-        local password=$(sed -nE 's/.*"password"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$init_file" 2>/dev/null | head -1)
+        local username
+        username=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$init_file" 2>/dev/null | head -1)
+        local password
+        password=$(sed -nE 's/.*"password"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$init_file" 2>/dev/null | head -1)
 
         if [ -n "$username" ] && [ -n "$password" ]; then
-            local port=$(crs_get_port)
-            local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+            local port
+            port=$(crs_get_port)
+            local server_ip
+            server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
             echo -e "  用户名: ${gl_huang}$username${gl_bai}"
             echo -e "  密  码: ${gl_huang}$password${gl_bai}"
@@ -18967,15 +19174,18 @@ crs_change_port() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
         return 1
     fi
 
-    local current_port=$(crs_get_port)
-    local install_dir=$(crs_get_install_dir)
+    local current_port
+    current_port=$(crs_get_port)
+    local install_dir
+    install_dir=$(crs_get_install_dir)
     echo -e "当前端口: ${gl_huang}$current_port${gl_bai}"
     echo ""
 
@@ -19028,7 +19238,8 @@ crs_change_port() {
         sleep 2
 
         if [ "$(crs_check_status)" = "running" ]; then
-            local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+            local server_ip
+            server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
             echo ""
             echo -e "${gl_lv}✅ 端口已修改为 $new_port${gl_bai}"
             echo -e "新访问地址: ${gl_huang}http://${server_ip}:${new_port}/web${gl_bai}"
@@ -19044,15 +19255,18 @@ crs_change_port() {
 crs_show_config() {
     clear
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装，请先执行一键部署${gl_bai}"
         break_end
         return 1
     fi
 
-    local port=$(crs_get_port)
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local port
+    port=$(crs_get_port)
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo -e "${gl_kjlan}  Claude Relay Service 配置指引${gl_bai}"
@@ -19132,14 +19346,16 @@ crs_uninstall() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(crs_check_status)
+    local status
+    status=$(crs_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ CRS 未安装${gl_bai}"
         break_end
         return 1
     fi
 
-    local install_dir=$(crs_get_install_dir)
+    local install_dir
+    install_dir=$(crs_get_install_dir)
 
     echo -e "${gl_hong}⚠️ 警告: 此操作将删除 CRS 服务和所有数据！${gl_bai}"
     echo ""
@@ -19194,8 +19410,10 @@ manage_crs() {
         echo ""
 
         # 显示当前状态
-        local status=$(crs_check_status)
-        local port=$(crs_get_port)
+        local status
+        status=$(crs_check_status)
+        local port
+        port=$(crs_get_port)
 
         case "$status" in
             "running")
@@ -19358,7 +19576,8 @@ fuclaude_deploy() {
     echo ""
 
     # 检查是否已安装
-    local status=$(fuclaude_check_status)
+    local status
+    status=$(fuclaude_check_status)
     if [ "$status" != "not_installed" ]; then
         echo -e "${gl_huang}⚠️ Fuclaude 已安装${gl_bai}"
         read -e -p "是否重新部署？(y/n) [n]: " reinstall
@@ -19411,7 +19630,8 @@ fuclaude_deploy() {
     fi
 
     # 生成 Cookie 密钥
-    local cookie_secret=$(fuclaude_generate_secret)
+    local cookie_secret
+    cookie_secret=$(fuclaude_generate_secret)
 
     # 拉取镜像
     echo ""
@@ -19456,7 +19676,8 @@ fuclaude_deploy() {
     }
 
     # 第一次尝试启动
-    local run_output=$(run_fuclaude_container)
+    local run_output
+    run_output=$(run_fuclaude_container)
     local run_result=$?
 
     # 检查是否是 iptables/网络错误
@@ -19499,7 +19720,8 @@ fuclaude_deploy() {
     sleep 3
 
     # 获取服务器 IP
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     echo ""
     echo -e "${gl_lv}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
@@ -19544,7 +19766,8 @@ fuclaude_update() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(fuclaude_check_status)
+    local status
+    status=$(fuclaude_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Fuclaude 未安装，请先执行一键部署${gl_bai}"
         break_end
@@ -19559,7 +19782,8 @@ fuclaude_update() {
         echo "正在重启容器..."
 
         # 获取保存的端口
-        local port=$(fuclaude_get_port)
+        local port
+        port=$(fuclaude_get_port)
 
         # 停止并删除旧容器
         docker stop "$FUCLAUDE_CONTAINER_NAME"
@@ -19601,9 +19825,12 @@ fuclaude_status() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(fuclaude_check_status)
-    local port=$(fuclaude_get_port)
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local status
+    status=$(fuclaude_check_status)
+    local port
+    port=$(fuclaude_get_port)
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     case "$status" in
         "running")
@@ -19653,8 +19880,10 @@ fuclaude_start() {
     docker start "$FUCLAUDE_CONTAINER_NAME"
 
     if [ $? -eq 0 ]; then
-        local port=$(fuclaude_get_port)
-        local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+        local port
+        port=$(fuclaude_get_port)
+        local server_ip
+        server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
         echo -e "${gl_lv}✅ 启动成功${gl_bai}"
         echo -e "访问地址: ${gl_huang}http://${server_ip}:${port}${gl_bai}"
     else
@@ -19688,8 +19917,10 @@ fuclaude_restart() {
     docker restart "$FUCLAUDE_CONTAINER_NAME"
 
     if [ $? -eq 0 ]; then
-        local port=$(fuclaude_get_port)
-        local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+        local port
+        port=$(fuclaude_get_port)
+        local server_ip
+        server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
         echo -e "${gl_lv}✅ 重启成功${gl_bai}"
         echo -e "访问地址: ${gl_huang}http://${server_ip}:${port}${gl_bai}"
     else
@@ -19708,14 +19939,16 @@ fuclaude_config() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(fuclaude_check_status)
+    local status
+    status=$(fuclaude_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Fuclaude 未安装${gl_bai}"
         break_end
         return 1
     fi
 
-    local current_port=$(fuclaude_get_port)
+    local current_port
+    current_port=$(fuclaude_get_port)
 
     echo "当前配置:"
     echo -e "  端口: ${gl_huang}$current_port${gl_bai}"
@@ -19752,7 +19985,8 @@ fuclaude_config() {
 # 修改端口
 fuclaude_change_port() {
     echo ""
-    local current_port=$(fuclaude_get_port)
+    local current_port
+    current_port=$(fuclaude_get_port)
     echo -e "当前端口: ${gl_huang}$current_port${gl_bai}"
     echo ""
 
@@ -19788,7 +20022,8 @@ fuclaude_change_port() {
     echo "正在修改端口..."
 
     # 获取当前容器的环境变量
-    local env_vars=$(docker inspect "$FUCLAUDE_CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+    local env_vars
+    env_vars=$(docker inspect "$FUCLAUDE_CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
 
     # 停止并删除旧容器
     docker stop "$FUCLAUDE_CONTAINER_NAME"
@@ -19796,9 +20031,12 @@ fuclaude_change_port() {
 
     # 用新端口创建容器
     # 解析环境变量并重新创建
-    local site_password=$(echo "$env_vars" | grep "FUCLAUDE_SITE_PASSWORD=" | cut -d= -f2-)
-    local cookie_secret=$(echo "$env_vars" | grep "FUCLAUDE_COOKIE_SECRET=" | cut -d= -f2-)
-    local signup_enabled=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
+    local site_password
+    site_password=$(echo "$env_vars" | grep "FUCLAUDE_SITE_PASSWORD=" | cut -d= -f2-)
+    local cookie_secret
+    cookie_secret=$(echo "$env_vars" | grep "FUCLAUDE_COOKIE_SECRET=" | cut -d= -f2-)
+    local signup_enabled
+    signup_enabled=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
 
     # 设置默认值
     [ -z "$cookie_secret" ] && cookie_secret=$(fuclaude_generate_secret)
@@ -19820,7 +20058,8 @@ fuclaude_change_port() {
 
     if [ $? -eq 0 ]; then
         echo "$new_port" > "$FUCLAUDE_PORT_FILE"
-        local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+        local server_ip
+        server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
         echo ""
         echo -e "${gl_lv}✅ 端口修改成功${gl_bai}"
         echo -e "新访问地址: ${gl_huang}http://${server_ip}:${new_port}${gl_bai}"
@@ -19840,10 +20079,14 @@ fuclaude_change_password() {
     echo "正在修改密码..."
 
     # 获取当前容器的环境变量
-    local env_vars=$(docker inspect "$FUCLAUDE_CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
-    local port=$(fuclaude_get_port)
-    local cookie_secret=$(echo "$env_vars" | grep "FUCLAUDE_COOKIE_SECRET=" | cut -d= -f2-)
-    local signup_enabled=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
+    local env_vars
+    env_vars=$(docker inspect "$FUCLAUDE_CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+    local port
+    port=$(fuclaude_get_port)
+    local cookie_secret
+    cookie_secret=$(echo "$env_vars" | grep "FUCLAUDE_COOKIE_SECRET=" | cut -d= -f2-)
+    local signup_enabled
+    signup_enabled=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
 
     [ -z "$cookie_secret" ] && cookie_secret=$(fuclaude_generate_secret)
     [ -z "$signup_enabled" ] && signup_enabled="false" || true
@@ -19884,8 +20127,10 @@ fuclaude_change_password() {
 # 修改注册设置
 fuclaude_change_signup() {
     echo ""
-    local env_vars=$(docker inspect "$FUCLAUDE_CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
-    local current_signup=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
+    local env_vars
+    env_vars=$(docker inspect "$FUCLAUDE_CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+    local current_signup
+    current_signup=$(echo "$env_vars" | grep "FUCLAUDE_SIGNUP_ENABLED=" | cut -d= -f2-)
 
     echo -e "当前注册设置: ${gl_huang}${current_signup:-false}${gl_bai}"
     echo ""
@@ -19899,9 +20144,12 @@ fuclaude_change_signup() {
     echo ""
     echo "正在修改注册设置..."
 
-    local port=$(fuclaude_get_port)
-    local site_password=$(echo "$env_vars" | grep "FUCLAUDE_SITE_PASSWORD=" | cut -d= -f2-)
-    local cookie_secret=$(echo "$env_vars" | grep "FUCLAUDE_COOKIE_SECRET=" | cut -d= -f2-)
+    local port
+    port=$(fuclaude_get_port)
+    local site_password
+    site_password=$(echo "$env_vars" | grep "FUCLAUDE_SITE_PASSWORD=" | cut -d= -f2-)
+    local cookie_secret
+    cookie_secret=$(echo "$env_vars" | grep "FUCLAUDE_COOKIE_SECRET=" | cut -d= -f2-)
 
     [ -z "$cookie_secret" ] && cookie_secret=$(fuclaude_generate_secret)
 
@@ -19942,7 +20190,8 @@ fuclaude_uninstall() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(fuclaude_check_status)
+    local status
+    status=$(fuclaude_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Fuclaude 未安装${gl_bai}"
         break_end
@@ -19992,8 +20241,10 @@ manage_fuclaude() {
         echo ""
 
         # 显示当前状态
-        local status=$(fuclaude_check_status)
-        local port=$(fuclaude_get_port)
+        local status
+        status=$(fuclaude_check_status)
+        local port
+        port=$(fuclaude_get_port)
 
         case "$status" in
             "running")
@@ -20117,7 +20368,8 @@ sub2api_extract_port() {
     local service_file="/etc/systemd/system/sub2api.service"
     if [ -f "$service_file" ]; then
         # 官方安装脚本以 Environment=SERVER_PORT=xxxx 形式写入端口
-        local port=$(sed -nE 's/^Environment=SERVER_PORT=([0-9]+)[[:space:]]*$/\1/p' "$service_file" 2>/dev/null | head -1)
+        local port
+        port=$(sed -nE 's/^Environment=SERVER_PORT=([0-9]+)[[:space:]]*$/\1/p' "$service_file" 2>/dev/null | head -1)
         if [ -n "$port" ]; then
             echo "$port"
             return
@@ -20174,7 +20426,8 @@ sub2api_setup_postgres() {
         echo -e "${gl_lv}✅ 数据库配置完成，连接正常${gl_bai}"
     else
         # 可能需要修改 pg_hba.conf 允许密码认证
-        local pg_hba=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
+        local pg_hba
+        pg_hba=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
         if [ -n "$pg_hba" ]; then
             # 检查是否已有 sub2api 的规则
             if ! grep -q "sub2api" "$pg_hba"; then
@@ -20243,7 +20496,8 @@ sub2api_deploy() {
     echo ""
 
     # 检查是否已安装
-    local status=$(sub2api_check_status)
+    local status
+    status=$(sub2api_check_status)
     if [ "$status" != "not_installed" ]; then
         echo -e "${gl_huang}⚠️ Sub2API 已安装${gl_bai}"
         read -e -p "是否重新部署？(y/n) [n]: " reinstall
@@ -20289,11 +20543,13 @@ sub2api_deploy() {
     # 从服务文件提取端口并保存
     echo ""
     echo -e "${gl_kjlan}[4/4] 验证安装...${gl_bai}"
-    local port=$(sub2api_extract_port)
+    local port
+    port=$(sub2api_extract_port)
     echo "$port" > "$SUB2API_PORT_FILE"
 
     # 获取服务器 IP
-    local server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
+    local server_ip
+    server_ip=$(curl -s4 ip.sb 2>/dev/null || curl -s6 ip.sb 2>/dev/null || echo "服务器IP")
 
     echo ""
     echo -e "${gl_lv}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
@@ -20388,8 +20644,10 @@ sub2api_view_status() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local port=$(sub2api_get_port)
-    local server_ip=$(curl -s4 --max-time 3 ip.sb 2>/dev/null || echo "获取中...")
+    local port
+    port=$(sub2api_get_port)
+    local server_ip
+    server_ip=$(curl -s4 --max-time 3 ip.sb 2>/dev/null || echo "获取中...")
 
     echo -e "服务状态: $(systemctl is-active $SUB2API_SERVICE_NAME 2>/dev/null || echo '未知')"
     echo -e "访问端口: ${gl_huang}${port}${gl_bai}"
@@ -20404,7 +20662,8 @@ sub2api_view_status() {
 
 # 修改端口
 sub2api_change_port() {
-    local current_port=$(sub2api_get_port)
+    local current_port
+    current_port=$(sub2api_get_port)
     echo ""
     echo -e "当前端口: ${gl_huang}${current_port}${gl_bai}"
     echo ""
@@ -20466,7 +20725,8 @@ sub2api_view_logs() {
 
 # 更新服务
 sub2api_update() {
-    local status=$(sub2api_check_status)
+    local status
+    status=$(sub2api_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Sub2API 未安装，请先执行一键部署${gl_bai}"
         break_end
@@ -20476,7 +20736,8 @@ sub2api_update() {
     echo -e "${gl_kjlan}正在执行官方升级脚本...${gl_bai}"
     echo ""
 
-    local tmp_script=$(mktemp)
+    local tmp_script
+    tmp_script=$(mktemp)
     if ! curl -fsSL "$SUB2API_INSTALL_SCRIPT" -o "$tmp_script"; then
         echo -e "${gl_hong}❌ 下载升级脚本失败${gl_bai}"
         rm -f "$tmp_script"
@@ -20500,7 +20761,8 @@ sub2api_update() {
 
 # 版本回退（降级）
 sub2api_downgrade() {
-    local status=$(sub2api_check_status)
+    local status
+    status=$(sub2api_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Sub2API 未安装，请先执行一键部署${gl_bai}"
         break_end
@@ -20584,7 +20846,8 @@ sub2api_downgrade() {
     echo ""
     echo -e "${gl_kjlan}正在执行版本回退...${gl_bai}"
 
-    local tmp_script=$(mktemp)
+    local tmp_script
+    tmp_script=$(mktemp)
     if ! curl -fsSL "$SUB2API_INSTALL_SCRIPT" -o "$tmp_script"; then
         echo -e "${gl_hong}❌ 下载安装脚本失败${gl_bai}"
         rm -f "$tmp_script"
@@ -20612,15 +20875,18 @@ sub2api_downgrade() {
 sub2api_show_config() {
     clear
 
-    local status=$(sub2api_check_status)
+    local status
+    status=$(sub2api_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Sub2API 未安装，请先执行一键部署${gl_bai}"
         break_end
         return 1
     fi
 
-    local port=$(sub2api_get_port)
-    local server_ip=$(curl -s4 --max-time 3 ip.sb 2>/dev/null || curl -s6 --max-time 3 ip.sb 2>/dev/null || echo "服务器IP")
+    local port
+    port=$(sub2api_get_port)
+    local server_ip
+    server_ip=$(curl -s4 --max-time 3 ip.sb 2>/dev/null || curl -s6 --max-time 3 ip.sb 2>/dev/null || echo "服务器IP")
 
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo -e "${gl_kjlan}  Sub2API 配置信息${gl_bai}"
@@ -20633,9 +20899,12 @@ sub2api_show_config() {
     # 读取数据库信息
     local db_info_file="$SUB2API_CONFIG_DIR/db-info"
     if [ -f "$db_info_file" ]; then
-        local db_user=$(grep "DB_USER=" "$db_info_file" | cut -d= -f2)
-        local db_pass=$(grep "DB_PASSWORD=" "$db_info_file" | cut -d= -f2)
-        local db_name=$(grep "DB_NAME=" "$db_info_file" | cut -d= -f2)
+        local db_user
+        db_user=$(grep "DB_USER=" "$db_info_file" | cut -d= -f2)
+        local db_pass
+        db_pass=$(grep "DB_PASSWORD=" "$db_info_file" | cut -d= -f2)
+        local db_name
+        db_name=$(grep "DB_NAME=" "$db_info_file" | cut -d= -f2)
 
         echo -e "${gl_kjlan}【数据库配置】${gl_bai}"
         echo -e "  主持人:     ${gl_huang}localhost${gl_bai}"
@@ -20747,8 +21016,10 @@ manage_sub2api() {
         echo ""
 
         # 显示当前状态
-        local status=$(sub2api_check_status)
-        local port=$(sub2api_get_port)
+        local status
+        status=$(sub2api_check_status)
+        local port
+        port=$(sub2api_get_port)
 
         case "$status" in
             "running")
@@ -20847,7 +21118,8 @@ CADDY_SITES_ENABLED="/etc/caddy/sites-enabled"
 
 # 获取服务器 IP
 caddy_get_server_ip() {
-    local ip=$(curl -s4 --max-time 5 ip.sb 2>/dev/null)
+    local ip
+    ip=$(curl -s4 --max-time 5 ip.sb 2>/dev/null)
     if [ -z "$ip" ]; then
         ip=$(curl -s6 --max-time 5 ip.sb 2>/dev/null)
     fi
@@ -20895,15 +21167,18 @@ caddy_handle_port_conflict() {
     fi
 
     # 端口被占用,查找占用进程
-    local pid=$(ss -lntp 2>/dev/null | grep ":${port} " | sed -nE 's/.*pid=([0-9]+).*/\1/p' | head -1)
+    local pid
+    pid=$(ss -lntp 2>/dev/null | grep ":${port} " | sed -nE 's/.*pid=([0-9]+).*/\1/p' | head -1)
 
     if [ -z "$pid" ]; then
         echo -e "${gl_hong}❌ 端口 ${port} 被占用，但无法获取进程信息${gl_bai}"
         return 1
     fi
 
-    local proc_comm=$(cat /proc/$pid/comm 2>/dev/null || echo "未知进程")
-    local proc_cwd=$(readlink -f /proc/$pid/cwd 2>/dev/null || echo "未知路径")
+    local proc_comm
+    proc_comm=$(cat /proc/$pid/comm 2>/dev/null || echo "未知进程")
+    local proc_cwd
+    proc_cwd=$(readlink -f /proc/$pid/cwd 2>/dev/null || echo "未知路径")
 
     echo -e "${gl_hong}⚠️ 端口 ${port} 被占用${gl_bai}"
     echo ""
@@ -21058,7 +21333,8 @@ caddy_check_firewall() {
 # 检查域名解析
 caddy_check_dns() {
     local domain=$1
-    local server_ip=$(caddy_get_server_ip)
+    local server_ip
+    server_ip=$(caddy_get_server_ip)
 
     echo -e "${gl_kjlan}检查域名解析...${gl_bai}"
     echo "域名: $domain"
@@ -21150,7 +21426,8 @@ caddy_migrate_old_config() {
     echo -e "${gl_huang}检测到旧版配置，正在迁移到新架构...${gl_bai}"
 
     # 从旧配置中提取邮箱
-    local ssl_email=$(awk '/^[[:space:]]*email[[:space:]]+/ {print $2; exit}' "$CADDY_CONFIG_FILE" 2>/dev/null)
+    local ssl_email
+    ssl_email=$(awk '/^[[:space:]]*email[[:space:]]+/ {print $2; exit}' "$CADDY_CONFIG_FILE" 2>/dev/null)
     [ -z "$ssl_email" ] && ssl_email="admin@example.com"
 
     # 备份旧配置
@@ -21230,7 +21507,8 @@ caddy_install() {
     echo ""
 
     # 检查是否已安装
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
     if [ "$status" != "not_installed" ]; then
         echo -e "${gl_huang}⚠️ Caddy 已安装${gl_bai}"
         echo ""
@@ -21305,22 +21583,33 @@ caddy_install() {
 
         if [[ "$url" == *.tar.gz ]]; then
             # 下载 tar.gz 格式
-            if curl -fsSL --connect-timeout 10 --max-time 60 "$url" -o /tmp/caddy.tar.gz 2>/dev/null; then
+            # 用 mktemp 而非固定的 /tmp/caddy.tar.gz：本函数以 root 运行，
+            # 写入可预测路径可被本地非特权用户预建符号链接劫持。
+            local caddy_tmpdir
+            caddy_tmpdir=$(mktemp -d) || continue
+            if curl -fsSL --connect-timeout 10 --max-time 60 "$url" -o "$caddy_tmpdir/caddy.tar.gz" 2>/dev/null; then
+                if ! verify_binary_download "$caddy_tmpdir/caddy.tar.gz" targz; then
+                    echo "下载内容不是有效的 gzip 归档，跳过此源" >&2
+                    rm -rf "$caddy_tmpdir"; continue
+                fi
                 echo "解压 Caddy..."
-                if tar -xzf /tmp/caddy.tar.gz -C /tmp/ caddy 2>/dev/null; then
-                    mv /tmp/caddy /usr/bin/caddy
+                if tar -xzf "$caddy_tmpdir/caddy.tar.gz" -C "$caddy_tmpdir/" caddy 2>/dev/null \
+                   && verify_binary_download "$caddy_tmpdir/caddy" elf; then
+                    mv "$caddy_tmpdir/caddy" /usr/bin/caddy
                     chmod +x /usr/bin/caddy
-                    rm -f /tmp/caddy.tar.gz
+                    rm -rf "$caddy_tmpdir"
                     download_success=true
                     break
                 fi
             fi
+            rm -rf "$caddy_tmpdir"
         else
             # 直接下载二进制文件
             if curl -fsSL --connect-timeout 10 --max-time 60 "$url" -o /usr/bin/caddy 2>/dev/null; then
                 # 验证文件是否有效(检查文件大小)
                 if [ -f /usr/bin/caddy ] && [ -s /usr/bin/caddy ]; then
-                    local file_size=$(stat -f%z /usr/bin/caddy 2>/dev/null || stat -c%s /usr/bin/caddy 2>/dev/null)
+                    local file_size
+                    file_size=$(stat -f%z /usr/bin/caddy 2>/dev/null || stat -c%s /usr/bin/caddy 2>/dev/null)
                     # Caddy 二进制文件应该大于 10MB
                     if [ "$file_size" -gt 10485760 ]; then
                         chmod +x /usr/bin/caddy
@@ -21474,7 +21763,8 @@ EOF
     if systemctl is-active caddy &>/dev/null; then
         echo -e "${gl_lv}✅ Caddy 启动成功${gl_bai}"
 
-        local server_ip=$(caddy_get_server_ip)
+        local server_ip
+        server_ip=$(caddy_get_server_ip)
 
         echo ""
         echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
@@ -21507,7 +21797,8 @@ caddy_add_domain() {
     echo ""
 
     # 检查 Caddy 是否已安装
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Caddy 未安装${gl_bai}"
         echo "请先使用 [1. 一键部署 Caddy]"
@@ -21727,7 +22018,8 @@ caddy_list_domains() {
 
     while IFS='|' read -r domain backend timestamp; do
         if [ -n "$domain" ]; then
-            local add_time=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M' 2>/dev/null || date -r "$timestamp" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "未知")
+            local add_time
+            add_time=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M' 2>/dev/null || date -r "$timestamp" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "未知")
             local status_icon
             if caddy_is_domain_enabled "$domain"; then
                 status_icon="${gl_lv}✅启用${gl_bai}"
@@ -21968,7 +22260,8 @@ caddy_reload() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Caddy 未安装${gl_bai}"
         break_end
@@ -22017,7 +22310,8 @@ caddy_show_status() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
 
     case "$status" in
         "running")
@@ -22040,7 +22334,8 @@ caddy_show_status() {
 
     # 显示版本
     if command -v caddy &>/dev/null; then
-        local version=$(caddy version 2>/dev/null | head -1)
+        local version
+        version=$(caddy version 2>/dev/null | head -1)
         echo "Caddy 版本: $version"
     fi
 
@@ -22064,7 +22359,8 @@ caddy_show_status() {
 
     # 显示配置的域名数量
     if [ -f "$CADDY_DOMAIN_LIST_FILE" ]; then
-        local domain_count=$(wc -l < "$CADDY_DOMAIN_LIST_FILE" 2>/dev/null || echo 0)
+        local domain_count
+        domain_count=$(wc -l < "$CADDY_DOMAIN_LIST_FILE" 2>/dev/null || echo 0)
         echo "配置域名: $domain_count 个"
     else
         echo "配置域名: 0 个"
@@ -22094,7 +22390,8 @@ caddy_show_logs() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Caddy 未安装${gl_bai}"
         break_end
@@ -22136,7 +22433,8 @@ caddy_show_logs() {
 
 # 启动/停止 Caddy
 caddy_toggle_service() {
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
 
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Caddy 未安装${gl_bai}"
@@ -22177,7 +22475,8 @@ caddy_uninstall() {
     echo -e "${gl_kjlan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${gl_bai}"
     echo ""
 
-    local status=$(caddy_check_status)
+    local status
+    status=$(caddy_check_status)
     if [ "$status" = "not_installed" ]; then
         echo -e "${gl_hong}❌ Caddy 未安装${gl_bai}"
         break_end
@@ -22258,8 +22557,10 @@ manage_caddy() {
         echo ""
 
         # 显示当前状态
-        local status=$(caddy_check_status)
-        local server_ip=$(caddy_get_server_ip)
+        local status
+        status=$(caddy_check_status)
+        local server_ip
+        server_ip=$(caddy_get_server_ip)
 
         case "$status" in
             "running")
@@ -22280,7 +22581,8 @@ manage_caddy() {
 
         # 显示域名数量
         if [ -f "$CADDY_DOMAIN_LIST_FILE" ]; then
-            local domain_count=$(wc -l < "$CADDY_DOMAIN_LIST_FILE" 2>/dev/null || echo 0)
+            local domain_count
+            domain_count=$(wc -l < "$CADDY_DOMAIN_LIST_FILE" 2>/dev/null || echo 0)
             echo -e "配置域名: ${gl_huang}${domain_count}${gl_bai} 个"
         fi
 
@@ -22301,7 +22603,8 @@ manage_caddy() {
         echo "9. 查看 Caddy 日志"
         echo "10. 卸载 Caddy"
         # CF 防火墙状态显示
-        local fw_status=$(caddy_cf_firewall_status)
+        local fw_status
+        fw_status=$(caddy_cf_firewall_status)
         if [ "$fw_status" = "enabled" ]; then
             echo -e "11. CF 防火墙 🛡️  ${gl_lv}[已启用]${gl_bai} — 点击关闭"
         else
@@ -22476,7 +22779,8 @@ caddy_cf_firewall_disable() {
 
 # CF 防火墙菜单入口
 caddy_cf_firewall_toggle() {
-    local fw_status=$(caddy_cf_firewall_status)
+    local fw_status
+    fw_status=$(caddy_cf_firewall_status)
     if [ "$fw_status" = "enabled" ]; then
         caddy_cf_firewall_disable
     else
