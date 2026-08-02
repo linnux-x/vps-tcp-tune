@@ -1,5 +1,15 @@
 # BBR v3 优化脚本 - Ultimate Edition v5.4.8
 
+> **这是 [Eric86777/vps-tcp-tune](https://github.com/Eric86777/vps-tcp-tune) 的 fork，含本仓库自有修改。**
+> 本页所有安装命令均指向本 fork（`linnux-x`）。若你想使用上游原版，请到上游仓库获取其安装命令——
+> **不要**把上游的安装命令与本 fork 混用：`bbr` 别名会在每次运行时从其指向的仓库拉取脚本，
+> 混用会导致你以为在跑本 fork、实际跑的是上游版本。
+>
+> 本 fork 相对上游的改动：
+> - 修复菜单 17 `vless-all-in-one` 失效（裸用 wget + 静默失败 + 下载到 CWD + 不校验内容）
+> - 启用 `set -Eeuo pipefail` 严格模式，并加 ERR 陷阱定位失败行号；`STRICT_MODE=0` 可临时关闭
+> - 新增 `verify_download()` 下载校验，已接入 Snell 二进制路径
+
 **XanMod 内核 + BBR v3 + 全方位 VPS 管理工具集**
 
 一键安装 XanMod 内核，启用 BBR v3 拥塞控制，集成 33 项实用功能，优化你的 VPS 服务器。
@@ -22,7 +32,7 @@ apt update -y && apt install curl -y
 
 ```bash
 # 安装别名
-bash <(curl -q -fsSL "https://raw.githubusercontent.com/Eric86777/vps-tcp-tune/refs/heads/main/install-alias.sh?$(date +%s)")
+bash <(curl -q -fsSL "https://raw.githubusercontent.com/linnux-x/vps-tcp-tune/refs/heads/main/install-alias.sh?$(date +%s)")
 
 # 重新加载配置
 source ~/.bashrc  # 或 source ~/.zshrc
@@ -45,13 +55,13 @@ bbr
 
 ```bash
 # 推荐：使用 -q 忽略本机 curlrc，并用时间戳参数确保获取最新版本（无缓存）
-bash <(curl -q -fsSL "https://raw.githubusercontent.com/Eric86777/vps-tcp-tune/refs/heads/main/net-tcp-tune.sh?$(date +%s)")
+bash <(curl -q -fsSL "https://raw.githubusercontent.com/linnux-x/vps-tcp-tune/refs/heads/main/net-tcp-tune.sh?$(date +%s)")
 ```
 
 ### 方式3：下载到本地
 
 ```bash
-wget -O net-tcp-tune.sh "https://raw.githubusercontent.com/Eric86777/vps-tcp-tune/refs/heads/main/net-tcp-tune.sh?$(date +%s)"
+wget -O net-tcp-tune.sh "https://raw.githubusercontent.com/linnux-x/vps-tcp-tune/refs/heads/main/net-tcp-tune.sh?$(date +%s)"
 chmod +x net-tcp-tune.sh
 ./net-tcp-tune.sh
 ```
@@ -281,7 +291,7 @@ A: 通常是该机器旧别名或本机 `~/.curlrc` 带了异常 Authorization�
 ```bash
 unalias bbr 2>/dev/null || true
 unset -f bbr 2>/dev/null || true
-bash <(curl -q -fsSL "https://raw.githubusercontent.com/Eric86777/vps-tcp-tune/refs/heads/main/install-alias.sh?$(date +%s)")
+bash <(curl -q -fsSL "https://raw.githubusercontent.com/linnux-x/vps-tcp-tune/refs/heads/main/install-alias.sh?$(date +%s)")
 source ~/.bashrc
 ```
 

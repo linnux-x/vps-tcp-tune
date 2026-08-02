@@ -87,7 +87,7 @@ alias_block_exists() {
     function is_project_alias(line,    body) {
         body = strip_unquoted_comment(line)
         return body ~ /^[[:space:]]*alias[[:space:]]+(bbr|dog)=/ &&
-               body ~ /(raw\.githubusercontent\.com|github\.com)\/Eric86777\/vps-tcp-tune\// &&
+               body ~ /(raw\.githubusercontent\.com|github\.com)\/(Eric86777|linnux-x)\/vps-tcp-tune\// &&
                body ~ /net-tcp-tune\.sh/
     }
     is_project_alias($0) { found = 1; exit }
@@ -102,7 +102,7 @@ append_alias_block() {
 # net-tcp-tune 快捷别名 (自动添加)
 # 使用 -q 忽略本机 curlrc，并用时间戳参数确保每次都获取最新版本，避免缓存
 # ========================================
-alias bbr="bash <(curl -q -fsSL \"https://raw.githubusercontent.com/Eric86777/vps-tcp-tune/refs/heads/main/net-tcp-tune.sh?\$(date +%s)\")"
+alias bbr="bash <(curl -q -fsSL \"https://raw.githubusercontent.com/linnux-x/vps-tcp-tune/refs/heads/main/net-tcp-tune.sh?\$(date +%s)\")"
 # <<< net-tcp-tune alias <<<
 ALIAS_EOF
 }
@@ -146,7 +146,7 @@ strip_alias_blocks() {
     function is_project_alias(line,    body) {
         body = strip_unquoted_comment(line)
         return body ~ /^[[:space:]]*alias[[:space:]]+(bbr|dog)=/ &&
-               body ~ /(raw\.githubusercontent\.com|github\.com)\/Eric86777\/vps-tcp-tune\// &&
+               body ~ /(raw\.githubusercontent\.com|github\.com)\/(Eric86777|linnux-x)\/vps-tcp-tune\// &&
                body ~ /net-tcp-tune\.sh/
     }
     function is_managed_comment(line) {
