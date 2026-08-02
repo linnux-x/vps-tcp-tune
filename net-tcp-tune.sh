@@ -5165,7 +5165,7 @@ PERSIST_SCRIPT_BODY
     cat > /etc/systemd/system/dns-purify-persist.service << 'PERSIST_SERVICE'
 [Unit]
 Description=DNS Purify - Restore DNS Configuration on Boot
-Documentation=https://github.com/Eric86777/vps-tcp-tune
+Documentation=https://github.com/linnux-x/vps-tcp-tune
 After=systemd-resolved.service network-online.target
 Wants=network-online.target
 Wants=systemd-resolved.service
@@ -7034,7 +7034,7 @@ strip_bbr_alias_blocks() {
     function is_project_alias(line,    body) {
         body = strip_unquoted_comment(line)
         return body ~ /^[[:space:]]*alias[[:space:]]+(bbr|dog)=/ &&
-               body ~ /(raw\.githubusercontent\.com|github\.com)\/Eric86777\/vps-tcp-tune\// &&
+               body ~ /(raw\.githubusercontent\.com|github\.com)\/(Eric86777|linnux-x)\/vps-tcp-tune\// &&
                body ~ /net-tcp-tune\.sh/
     }
     function is_managed_comment(line) {
@@ -7112,7 +7112,7 @@ rc_file_has_bbr_alias() {
     function is_project_alias(line,    body) {
         body = strip_unquoted_comment(line)
         return body ~ /^[[:space:]]*alias[[:space:]]+(bbr|dog)=/ &&
-               body ~ /(raw\.githubusercontent\.com|github\.com)\/Eric86777\/vps-tcp-tune\// &&
+               body ~ /(raw\.githubusercontent\.com|github\.com)\/(Eric86777|linnux-x)\/vps-tcp-tune\// &&
                body ~ /net-tcp-tune\.sh/
     }
     is_project_alias($0) { found = 1; exit }
